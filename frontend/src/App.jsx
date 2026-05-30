@@ -11,6 +11,8 @@ function App() {
   });
   const [overrides, setOverrides] = useState({
     exclude_toxic: false,
+    exclude_halogenated: false,
+    reaction_temperature: 80,
     force_solvent: '',
   });
   const [session, setSession] = useState(null);
@@ -48,6 +50,8 @@ function App() {
       weights: normalizedWeights,
       overrides: {
         exclude_toxic: overrides.exclude_toxic,
+        exclude_halogenated: overrides.exclude_halogenated,
+        reaction_temperature: overrides.reaction_temperature,
         force_solvent: overrides.force_solvent.trim() || undefined
       }
     };
@@ -152,6 +156,22 @@ function App() {
               />
               <label htmlFor="ex-tox">Exclude Highly Toxic (&gt;0.5)</label>
             </div>
+            <div className="checkbox-group">
+              <input 
+                type="checkbox" id="ex-halo"
+                checked={overrides.exclude_halogenated}
+                onChange={(e) => setOverrides(prev => ({ ...prev, exclude_halogenated: e.target.checked }))}
+              />
+              <label htmlFor="ex-halo">Exclude Halogenated Solvents</label>
+            </div>
+            <div className="control-group" style={{ marginTop: '15px' }}>
+              <label>🌡️ Reaction Temperature: {overrides.reaction_temperature}°C</label>
+              <input 
+                type="range" min="20" max="200" step="5" 
+                value={overrides.reaction_temperature} 
+                onChange={(e) => setOverrides(prev => ({ ...prev, reaction_temperature: parseInt(e.target.value) }))}
+              />
+            </div>
             <div className="control-group" style={{ marginTop: '15px' }}>
               <label>Force Solvent Option:</label>
               <input 
@@ -209,6 +229,20 @@ function App() {
                         <span>Confidence Bounds:</span>
                         <span>{r.yield_info.confidence_interval[0]}% - {r.yield_info.confidence_interval[1]}%</span>
                       </div>
+                      <div className="metric-row">
+                        <span>🌡️ Boiling Point:</span>
+                        <strong>{r.boiling_point}°C</strong>
+                      </div>
+                      <div className="metric-row">
+                        <span>⚡ Energy Demand:</span>
+                        <strong className="energy-val">{r.energy_demand} kJ</strong>
+                      </div>
+                      {r.halogenated && (
+                        <div className="metric-row halogenated-flag">
+                          <span>☣️ Halogenated:</span>
+                          <strong>Yes</strong>
+                        </div>
+                      )}
                     </div>
 
                     <p className="explanation-text">"{r.explanation}"</p>

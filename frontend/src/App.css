@@ -312,6 +312,31 @@ body {
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 0.85rem;
+  animation: warningPulse 2s ease-in-out infinite;
+}
+
+@keyframes warningPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.energy-val {
+  color: #fbbf24;
+  font-size: 1.05rem;
+}
+
+.halogenated-flag {
+  background-color: rgba(255, 100, 0, 0.1);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.halogenated-flag strong {
+  color: #ff6b35;
+}
+
+.checkbox-group + .checkbox-group {
+  margin-top: 10px;
 }
 
 .hitl-section h2 {

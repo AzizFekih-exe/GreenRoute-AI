@@ -18,9 +18,19 @@ class SolventDatabase:
     def __init__(self, db_path="solvents.db"):
         self.db_path = db_path
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._migrate_schema()
         self.create_tables()
         self.populate_default_solvents()
         self.build_faiss_index()
+
+    def _migrate_schema(self):
+        """Drop and recreate the solvents table if it was created with the old schema."""
+        cursor = self.conn.cursor()
+        cursor.execute("PRAGMA table_info(solvents)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "boiling_point" not in columns:
+            cursor.execute("DROP TABLE IF EXISTS solvents")
+            self.conn.commit()
 
     def create_tables(self):
         cursor = self.conn.cursor()
@@ -33,6 +43,9 @@ class SolventDatabase:
                 voc REAL,                 -- 0 to 1 (1 is high VOC emissions)
                 biodegradability REAL,    -- 0 to 1 (1 is highly biodegradable)
                 recyclability REAL,       -- 0 to 1 (1 is highly recyclable)
+                boiling_point REAL,       -- in °C
+                heat_capacity REAL,       -- in J/g·K
+                halogenated INTEGER,      -- 0 or 1
                 data_source TEXT
             )
         """)
@@ -50,32 +63,33 @@ class SolventDatabase:
         self.conn.commit()
 
     def populate_default_solvents(self):
+        # (name, smiles, tox, voc, bio, rec, boiling_point, heat_capacity, halogenated, source)
         default_solvents = [
-            ("Dimethylformamide", "CN(C)C=O", 0.9, 0.8, 0.1, 0.2, "PubChem"),
-            ("Dichloromethane", "ClCCl", 0.85, 0.95, 0.05, 0.4, "ECHA"),
-            ("Hexane", "CCCCCC", 0.7, 0.9, 0.2, 0.3, "ECHA"),
-            ("Toluene", "Cc1ccccc1", 0.6, 0.7, 0.5, 0.5, "PubChem"),
-            ("Cyclopentyl methyl ether", "COC1CCCC1", 0.15, 0.3, 0.8, 0.7, "Literature"),
-            ("Ethyl lactate", "CCOC(=O)C(C)O", 0.05, 0.1, 0.95, 0.6, "Literature"),
-            ("2-Methyltetrahydrofuran", "CC1CCCO1", 0.2, 0.35, 0.75, 0.7, "Literature"),
-            ("Ethanol", "CCO", 0.1, 0.4, 0.9, 0.8, "PubChem"),
-            ("Water", "O", 0.0, 0.0, 1.0, 1.0, "USPTO")
+            ("Dimethylformamide", "CN(C)C=O", 0.9, 0.8, 0.1, 0.2, 153.0, 2.14, 0, "PubChem"),
+            ("Dichloromethane", "ClCCl", 0.85, 0.95, 0.05, 0.4, 39.6, 1.20, 1, "ECHA"),
+            ("Hexane", "CCCCCC", 0.7, 0.9, 0.2, 0.3, 68.0, 2.26, 0, "ECHA"),
+            ("Toluene", "Cc1ccccc1", 0.6, 0.7, 0.5, 0.5, 110.6, 1.70, 0, "PubChem"),
+            ("Cyclopentyl methyl ether", "COC1CCCC1", 0.15, 0.3, 0.8, 0.7, 106.0, 1.96, 0, "Literature"),
+            ("Ethyl lactate", "CCOC(=O)C(C)O", 0.05, 0.1, 0.95, 0.6, 154.0, 2.01, 0, "Literature"),
+            ("2-Methyltetrahydrofuran", "CC1CCCO1", 0.2, 0.35, 0.75, 0.7, 80.2, 1.98, 0, "Literature"),
+            ("Ethanol", "CCO", 0.1, 0.4, 0.9, 0.8, 78.0, 2.44, 0, "PubChem"),
+            ("Water", "O", 0.0, 0.0, 1.0, 1.0, 100.0, 4.18, 0, "USPTO")
         ]
         cursor = self.conn.cursor()
-        for name, smiles, tox, voc, bio, rec, source in default_solvents:
+        for name, smiles, tox, voc, bio, rec, bp, hc, halo, source in default_solvents:
             try:
                 cursor.execute("""
                     INSERT OR IGNORE INTO solvents 
-                    (name, smiles, toxicity, voc, biodegradability, recyclability, data_source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (name, smiles, tox, voc, bio, rec, source))
+                    (name, smiles, toxicity, voc, biodegradability, recyclability, boiling_point, heat_capacity, halogenated, data_source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, smiles, tox, voc, bio, rec, bp, hc, halo, source))
             except sqlite3.Error:
                 pass
         self.conn.commit()
 
     def get_all_solvents(self):
         cursor = self.conn.cursor()
-        cursor.execute("SELECT id, name, smiles, toxicity, voc, biodegradability, recyclability, data_source FROM solvents")
+        cursor.execute("SELECT id, name, smiles, toxicity, voc, biodegradability, recyclability, boiling_point, heat_capacity, halogenated, data_source FROM solvents")
         rows = cursor.fetchall()
         solvents = []
         for r in rows:
@@ -87,7 +101,10 @@ class SolventDatabase:
                 "voc": r[4],
                 "biodegradability": r[5],
                 "recyclability": r[6],
-                "data_source": r[7]
+                "boiling_point": r[7],
+                "heat_capacity": r[8],
+                "halogenated": bool(r[9]),
+                "data_source": r[10]
             })
         return solvents
 
@@ -140,7 +157,7 @@ class SolventDatabase:
                 continue
             db_id = self.indexed_ids[idx]
             cursor.execute("""
-                SELECT id, name, smiles, toxicity, voc, biodegradability, recyclability, data_source
+                SELECT id, name, smiles, toxicity, voc, biodegradability, recyclability, boiling_point, heat_capacity, halogenated, data_source
                 FROM solvents WHERE id = ?
             """, (db_id,))
             r = cursor.fetchone()
@@ -153,7 +170,10 @@ class SolventDatabase:
                     "voc": r[4],
                     "biodegradability": r[5],
                     "recyclability": r[6],
-                    "data_source": r[7]
+                    "boiling_point": r[7],
+                    "heat_capacity": r[8],
+                    "halogenated": bool(r[9]),
+                    "data_source": r[10]
                 })
         return results
 

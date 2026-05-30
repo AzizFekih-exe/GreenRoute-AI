@@ -52,6 +52,10 @@ class Orchestrator:
             if overrides.get("exclude_toxic") and s["toxicity"] > 0.5:
                 continue
                 
+            # Parameter Override: Exclude halogenated solvents if requested
+            if overrides.get("exclude_halogenated") and s.get("halogenated"):
+                continue
+                
             # Parameter Override: Force specific solvent selection
             if overrides.get("force_solvent") and s["name"].lower() != overrides["force_solvent"].lower():
                 continue
@@ -83,6 +87,17 @@ class Orchestrator:
             yield_explanation = ExplanationEngine.get_uncertainty_explanation(yield_data)
             warnings = ExplanationEngine.get_missing_data_warnings(s)
             
+            # Calculate simulated Energy Demand in kJ (heating 10 kg of solvent from 25°C to reaction_temperature)
+            reaction_temp = float(overrides.get("reaction_temperature", 80.0))
+            delta_t = max(0.0, reaction_temp - 25.0)
+            solvent_heat_capacity = s.get("heat_capacity", 2.0)
+            energy_demand = round(10.0 * solvent_heat_capacity * delta_t, 1)
+            
+            # Boiling point high-pressure warning
+            boiling_point = s.get("boiling_point", 100.0)
+            if reaction_temp > boiling_point:
+                warnings.append(f"Operating temperature ({reaction_temp}°C) exceeds solvent boiling point ({boiling_point}°C). Reaction requires a sealed, high-pressure autoclave.")
+            
             processed_candidates.append({
                 "name": s["name"],
                 "smiles": s["smiles"],
@@ -90,6 +105,10 @@ class Orchestrator:
                 "voc": s["voc"],
                 "biodegradability": s["biodegradability"],
                 "recyclability": s["recyclability"],
+                "boiling_point": boiling_point,
+                "heat_capacity": solvent_heat_capacity,
+                "halogenated": s.get("halogenated", False),
+                "energy_demand": energy_demand,
                 "e_factor": e_factor,
                 "green_score": round(score, 3),
                 "yield_info": yield_data,

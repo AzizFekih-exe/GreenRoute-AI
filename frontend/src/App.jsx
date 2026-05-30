@@ -135,6 +135,9 @@ function App() {
   const [error, setError] = useState(null);
   const [approvedSolvent, setApprovedSolvent] = useState(null);
   const [selectedForApprove, setSelectedForApprove] = useState('');
+  const [activeTab, setActiveTab] = useState('optimization');
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const BACKEND_URL = "http://localhost:5000";
 
@@ -223,6 +226,25 @@ function App() {
     }
   };
 
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const headers = {};
+      if (user && user.token) {
+        headers['Authorization'] = `Bearer ${user.token}`;
+      }
+      const res = await fetch(`${BACKEND_URL}/api/v1/experiments/history`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.history || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   const handleApprove = async () => {
     if (!session || !selectedForApprove) return;
     try {
@@ -245,6 +267,28 @@ function App() {
       }
       if (res.ok) {
         setApprovedSolvent(selectedForApprove);
+
+        // --- Event Interception: Log the experiment ---
+        const approvedRec = session.recommendations.find(r => r.name === selectedForApprove);
+        const experimentPayload = {
+          utc_timestamp: new Date().toISOString(),
+          target_smiles: targetSmiles,
+          solvent_name: selectedForApprove,
+          reaction_temperature: overrides.reaction_temperature,
+          weights: weights,
+          overrides: overrides,
+          energy_demand: approvedRec ? approvedRec.energy_demand : null,
+          green_score: approvedRec ? approvedRec.green_score : null
+        };
+        try {
+          await fetch(`${BACKEND_URL}/api/v1/experiments`, {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(experimentPayload)
+          });
+        } catch (logErr) {
+          console.error('Failed to log experiment:', logErr);
+        }
       } else {
         const errorText = await res.text();
         alert(`Validation failed: ${errorText}`);
@@ -302,6 +346,22 @@ function App() {
 
       <div className="main-content">
         <aside className="sidebar">
+          <div className="sidebar-nav">
+            <button
+              className={`sidebar-nav-btn ${activeTab === 'optimization' ? 'active' : ''}`}
+              onClick={() => setActiveTab('optimization')}
+            >
+              🧪 Optimization
+            </button>
+            <button
+              className={`sidebar-nav-btn ${activeTab === 'history' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('history'); fetchHistory(); }}
+            >
+              📜 History
+            </button>
+          </div>
+
+          {activeTab === 'optimization' && (<>
           <div className="sidebar-section">
             <h3>🎛️ Optimization Weights</h3>
             <div className="control-group">
@@ -374,9 +434,11 @@ function App() {
               />
             </div>
           </div>
+          </>)}
         </aside>
 
         <main className="dashboard-area">
+          {activeTab === 'optimization' && (<>
           <section className="search-section card">
             <h2>🧪 Molecule Optimization Search</h2>
             <div className="search-bar">
@@ -478,6 +540,64 @@ function App() {
                 )}
               </section>
             </div>
+          )}
+          </>)}
+
+          {activeTab === 'history' && (
+            <section className="history-section">
+              <h2 className="history-title">📜 Experiment Validation History</h2>
+              <p className="history-subtitle">All validated solvent selections, logged with full experimental context.</p>
+              {historyLoading ? (
+                <div className="history-loading">Loading history...</div>
+              ) : history.length === 0 ? (
+                <div className="history-empty">
+                  <span className="history-empty-icon">🧫</span>
+                  <p>No experiments validated yet.</p>
+                  <p className="text-muted">Run an optimization search and approve a solvent to start building your experiment log.</p>
+                </div>
+              ) : (
+                <div className="history-timeline">
+                  {history.map((exp, idx) => (
+                    <div key={exp.id} className="history-card glass-card">
+                      <div className="history-card-header">
+                        <span className="history-index">#{history.length - idx}</span>
+                        <span className="history-timestamp">
+                          {new Date(exp.utc_timestamp).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="history-card-body">
+                        <div className="history-detail">
+                          <span className="history-label">🧪 Target Molecule</span>
+                          <code className="smiles-code">{exp.target_smiles}</code>
+                        </div>
+                        <div className="history-detail">
+                          <span className="history-label">✅ Approved Solvent</span>
+                          <strong className="history-solvent-name">{exp.solvent_name}</strong>
+                        </div>
+                        <div className="history-metrics">
+                          <div className="history-metric">
+                            <span>🌡️ Temp</span>
+                            <strong>{exp.reaction_temperature}°C</strong>
+                          </div>
+                          {exp.energy_demand != null && (
+                            <div className="history-metric">
+                              <span>⚡ Energy</span>
+                              <strong className="energy-val">{exp.energy_demand} kJ</strong>
+                            </div>
+                          )}
+                          {exp.green_score != null && (
+                            <div className="history-metric">
+                              <span>🌿 Green Score</span>
+                              <strong className="score-val">{exp.green_score}</strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
         </main>
       </div>

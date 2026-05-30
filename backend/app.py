@@ -248,6 +248,74 @@ def validate():
     else:
         return jsonify({"error": "Failed to approve. Validate session_id and solvent_name."}), 400
 
+@app.route('/api/v1/experiments', methods=['POST'])
+@require_auth
+def log_experiment():
+    """
+    Log an experimental validation event
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            target_smiles:
+              type: string
+            solvent_name:
+              type: string
+            reaction_temperature:
+              type: number
+            weights:
+              type: object
+            overrides:
+              type: object
+            energy_demand:
+              type: number
+            green_score:
+              type: number
+            utc_timestamp:
+              type: string
+    responses:
+      200:
+        description: Logged successfully
+      400:
+        description: Missing parameters
+    """
+    data = request.get_json() or {}
+    import json
+    try:
+        exp_id = orchestrator.db.log_experiment(
+            user_id=request.user["id"],
+            utc_timestamp=data.get("utc_timestamp"),
+            target_smiles=data.get("target_smiles"),
+            solvent_name=data.get("solvent_name"),
+            reaction_temperature=data.get("reaction_temperature"),
+            weights_json=json.dumps(data.get("weights", {})),
+            overrides_json=json.dumps(data.get("overrides", {})),
+            energy_demand=data.get("energy_demand"),
+            green_score=data.get("green_score")
+        )
+        return jsonify({"message": "Experiment logged", "experiment_id": exp_id}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/experiments/history', methods=['GET'])
+@require_auth
+def get_experiments_history():
+    """
+    Get experimental validation history
+    ---
+    responses:
+      200:
+        description: List of experiments
+    """
+    try:
+        history = orchestrator.db.get_user_experiments(request.user["id"])
+        return jsonify({"history": history}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/session/<session_id>', methods=['GET'])
 @require_auth
 def get_session(session_id):

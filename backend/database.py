@@ -93,6 +93,21 @@ class SolventDatabase:
                 user_id INTEGER REFERENCES users(id)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS experiments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER REFERENCES users(id),
+                utc_timestamp TEXT,
+                target_smiles TEXT,
+                solvent_name TEXT,
+                reaction_temperature REAL,
+                weights_json TEXT,
+                overrides_json TEXT,
+                energy_demand REAL,
+                green_score REAL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_experiments_user_time ON experiments(user_id, utc_timestamp DESC)")
         self.conn.commit()
 
     def populate_default_solvents(self):
@@ -349,6 +364,49 @@ class SolventDatabase:
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM user_tokens WHERE token = ?", (token,))
         self.conn.commit()
+
+    def log_experiment(self, user_id, utc_timestamp, target_smiles, solvent_name, reaction_temperature, weights_json, overrides_json, energy_demand, green_score):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO experiments (
+                user_id, utc_timestamp, target_smiles, solvent_name, 
+                reaction_temperature, weights_json, overrides_json, 
+                energy_demand, green_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id, utc_timestamp, target_smiles, solvent_name,
+            reaction_temperature, weights_json, overrides_json,
+            energy_demand, green_score
+        ))
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def get_user_experiments(self, user_id):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, utc_timestamp, target_smiles, solvent_name, 
+                   reaction_temperature, weights_json, overrides_json, 
+                   energy_demand, green_score
+            FROM experiments
+            WHERE user_id = ?
+            ORDER BY utc_timestamp DESC
+        """, (user_id,))
+        
+        results = []
+        import json
+        for row in cursor.fetchall():
+            results.append({
+                "id": row[0],
+                "utc_timestamp": row[1],
+                "target_smiles": row[2],
+                "solvent_name": row[3],
+                "reaction_temperature": row[4],
+                "weights": json.loads(row[5]) if row[5] else {},
+                "overrides": json.loads(row[6]) if row[6] else {},
+                "energy_demand": row[7],
+                "green_score": row[8]
+            })
+        return results
 
     def close(self):
         self.conn.close()

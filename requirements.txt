@@ -1,0 +1,7 @@
+rdkit
+numpy
+pandas
+scikit-learn
+joblib
+faiss-cpu
+scipy

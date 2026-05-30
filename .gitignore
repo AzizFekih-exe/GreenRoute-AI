@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Data and Models (Large files)
+data/
+*.pkl
+*.idx
+yield_predictor.pkl
+scaler.pkl
+
+# Logs and temporary files
+*.log
+output.txt
+.antigravity/
+
+# OS generated files
+.DS_Store
+Thumbs.db

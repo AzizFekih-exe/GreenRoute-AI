@@ -7,7 +7,7 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def constructor(question: str, lib_result: dict, res_result: dict) -> str:
     """Synthesizes all agent outputs into a final answer for the user."""
-    print("\n🏗️  [CONSTRUCTOR] Building final response...")
+    print("\n[CONSTRUCTOR] Building final response...")
 
     lib_ok = lib_result.get("success", False)
     res_ok = res_result.get("success", False)
@@ -21,7 +21,7 @@ def constructor(question: str, lib_result: dict, res_result: dict) -> str:
             f"I was unable to retrieve information from either the local Tox21 dataset or the web. "
             f"Please try rephrasing your question or check system connectivity."
         )
-        print("   ⚠️  Both agents failed — issuing OVERRIDE response.")
+        print("   [WARNING] Both agents failed — issuing OVERRIDE response.")
         return override_msg
 
     # Build context, noting partial failures
@@ -46,7 +46,7 @@ def constructor(question: str, lib_result: dict, res_result: dict) -> str:
 
     try:
         response = groq_client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             temperature=0.3,
             messages=[
                 {
@@ -81,7 +81,7 @@ Context:
         return answer + source_block
 
     except Exception as e:
-        print(f"   ❌ Constructor LLM error: {e}")
+        print(f"   [ERROR] Constructor LLM error: {e}")
         return (
             f"⚠️ **[OVERRIDE — Constructor failed]**\n\n"
             f"Error: {e}\n\n"

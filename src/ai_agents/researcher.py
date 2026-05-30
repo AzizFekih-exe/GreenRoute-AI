@@ -8,10 +8,10 @@ tavily_client = TavilyClient(api_key=_api_key) if _api_key else None
 
 def researcher(question: str) -> dict:
     """Searches the web via Tavily for up-to-date chemical/scientific information."""
-    print("\n🔍 [RESEARCHER] Searching the web for updated information...")
+    print("\n[RESEARCHER] Searching the web for updated information...")
     
     if not tavily_client:
-        print("   ❌ Tavily API key not found. Skipping web search.")
+        print("   [ERROR] Tavily API key not found. Skipping web search.")
         return {"success": False, "content": "", "sources": [], "error": "No API key"}
 
     try:
@@ -37,9 +37,9 @@ def researcher(question: str) -> dict:
             content_parts.append(f"• {r.get('title','')}: {r.get('content','')[:400]}")
             sources.append(r.get("url", ""))
 
-        print(f"   ✅ Found {len(web_results)} web results.")
+        print(f"   [SUCCESS] Found {len(web_results)} web results.")
         return {"success": True, "content": "\n\n".join(content_parts), "sources": sources}
 
     except Exception as e:
-        print(f"   ❌ Researcher error: {e}")
+        print(f"   [ERROR] Researcher error: {e}")
         return {"success": False, "content": "", "sources": [], "error": str(e)}

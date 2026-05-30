@@ -15,10 +15,10 @@ groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
 def gatekeeper(question: str) -> dict:
     """Decides if the question is relevant to chemoinformatics, chemistry, or biology."""
-    print("\n🛡️  [GATEKEEPER] Evaluating question relevance...")
+    print("\n[GATEKEEPER] Evaluating question relevance...")
     try:
         response = groq_client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             temperature=0,
             messages=[
                 {
@@ -56,8 +56,8 @@ or
             if raw.startswith("json"):
                 raw = raw[4:]
         result = json.loads(raw.strip())
-        status = "✅ ALLOWED" if result.get("allowed") else "🚫 BLOCKED"
-        print(f"   {status} — {result.get('reason', '')}")
+        status = "ALLOWED" if result.get("allowed") else "BLOCKED"
+        print(f"   [{status}] — {result.get('reason', '')}")
         return result
     except Exception as e:
         print(f"    Gatekeeper error: {e}")

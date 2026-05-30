@@ -1,10 +1,16 @@
 import os
 import pandas as pd
-from src.data.tox21_loader import load_compound_metadata
+
+_TOX21_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "tox21", "tox21_compoundData.csv")
+
+def load_compound_metadata():
+    return pd.read_csv(_TOX21_CSV)
+
+
 
 def librarian(question: str) -> dict:
     """Queries the local Tox21 database for compound information."""
-    print("\n📚 [LIBRARIAN] Searching local Tox21 dataset...")
+    print("\n[LIBRARIAN] Searching local Tox21 dataset...")
     try:
         df = load_compound_metadata()
         # Searching the compoundData.csv
@@ -33,9 +39,9 @@ def librarian(question: str) -> dict:
             row_str = " | ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
             chunks.append(f"Tox21 Record: {row_str}")
 
-        print(f"   ✅ Found {len(chunks)} relevant records from Tox21.")
+        print(f"   [SUCCESS] Found {len(chunks)} relevant records from Tox21.")
         return {"success": True, "content": "\n---\n".join(chunks), "sources": ["Tox21 Dataset (tox21_compoundData.csv)"]}
 
     except Exception as e:
-        print(f"   ❌ Librarian error: {e}")
+        print(f"   [ERROR] Librarian error: {e}")
         return {"success": False, "content": "", "sources": [], "error": str(e)}

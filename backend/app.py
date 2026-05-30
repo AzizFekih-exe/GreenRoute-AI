@@ -1,8 +1,22 @@
+import os
+import sys
+from dotenv import load_dotenv
+
+# Ensure project root is in python path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Load environment variables
+dotenv_path = os.path.join(project_root, "src", "ai_agents", ".env")
+load_dotenv(dotenv_path)
+
 from flask import Flask, request, jsonify
 from functools import wraps
 from orchestrator import Orchestrator
 from flasgger import Swagger
 
+# Trigger reload: RDKit support verified.
 app = Flask(__name__)
 swagger = Swagger(app)
 
@@ -204,6 +218,8 @@ def recommend():
     try:
         session = orchestrator.generate_recommendations(target_smiles, weights, overrides, user_id=request.user["id"])
         return jsonify(session)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

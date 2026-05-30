@@ -1,8 +1,14 @@
 import uuid
+import requests
 from database import SolventDatabase
 from models import YieldPredictor, QSARClassifier
 from metrics import calculate_green_solvent_score
 from explanation import ExplanationEngine
+
+try:
+    from rdkit import Chem
+except ImportError:
+    Chem = None
 
 class Orchestrator:
     """
@@ -15,6 +21,45 @@ class Orchestrator:
         self.yield_predictor = YieldPredictor()
         self.qsar_classifier = QSARClassifier()
 
+    def _is_valid_smiles(self, smiles: str) -> bool:
+        if not smiles:
+            return False
+        if Chem is None:
+            # Fallback if RDKit is not installed locally
+            return len(smiles) > 0
+        try:
+            mol = Chem.MolFromSmiles(smiles)
+            return mol is not None
+        except Exception:
+            return False
+
+    def _resolve_name_to_smiles(self, name: str) -> str:
+        name_clean = name.strip()
+        if not name_clean:
+            return None
+        
+        # Check if the name matches any of our database solvents' names exactly as a shortcut
+        solvents = self.db.get_all_solvents()
+        for s in solvents:
+            if s["name"].lower() == name_clean.lower():
+                return s["smiles"]
+        
+        # Query PubChem PUG REST API
+        url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{requests.utils.quote(name_clean)}/property/CanonicalSMILES/JSON"
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                properties = data.get("PropertyTable", {}).get("Properties", [])
+                if properties:
+                    prop = properties[0]
+                    for key, val in prop.items():
+                        if "SMILES" in key:
+                            return val
+        except Exception:
+            pass
+        return None
+
     def generate_recommendations(self, target_smiles: str, weights: dict, overrides: dict = None, user_id: int = None) -> dict:
         """
         1. Retrieves all solvents from database.
@@ -26,6 +71,19 @@ class Orchestrator:
         if overrides is None:
             overrides = {}
             
+        input_target = target_smiles.strip() if target_smiles else ""
+        resolved_smiles = None
+        
+        if self._is_valid_smiles(input_target):
+            resolved_smiles = input_target
+        else:
+            resolved_smiles = self._resolve_name_to_smiles(input_target)
+            if not resolved_smiles or not self._is_valid_smiles(resolved_smiles):
+                raise ValueError(
+                    f"Molecule '{input_target}' is neither a valid SMILES string nor a recognized compound name."
+                )
+                
+        target_smiles = resolved_smiles
         candidates = self.db.get_all_solvents()
         
         # Determine reference solvent for comparative XAI (e.g. Dichloromethane or Hexane)
@@ -121,6 +179,38 @@ class Orchestrator:
         # Sort candidates by their overall Green Solvent Score descending
         processed_candidates.sort(key=lambda x: x["green_score"], reverse=True)
         top_3 = processed_candidates[:3]
+        
+        # Parallel generation of agent explanations for the top 3 recommendations
+        import concurrent.futures
+        try:
+            from src.ai_agents.agents import run_pipeline
+            
+            def fetch_agent_explanation(candidate, target_sm, ref_name):
+                q = f"Why is {candidate['name']} preferred over {ref_name} as a green solvent for target molecule {target_sm}?"
+                try:
+                    ai_exp = run_pipeline(q)
+                    if ai_exp:
+                        return ai_exp
+                except Exception as e:
+                    print(f"Failed to generate AI agent explanation for {candidate['name']}: {e}")
+                return candidate["explanation"] # Fallback
+
+            ref_solvent_name = ref_solvent.get("name", "DCM")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(fetch_agent_explanation, r, target_smiles, ref_solvent_name): r
+                    for r in top_3
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    r = futures[future]
+                    try:
+                        ai_explanation = future.result()
+                        if ai_explanation:
+                            r["explanation"] = ai_explanation
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Skipping AI agent explanation generation: {e}")
         
         # Initialize validation session for HITL tracking
         session_id = str(uuid.uuid4())

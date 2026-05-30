@@ -5,7 +5,7 @@ from src.ai_agents.constructor import constructor
 
 def run_pipeline(question: str) -> str:
     print(f"\n{'='*60}")
-    print(f"❓ QUESTION: {question}")
+    print(f"[QUESTION] {question}")
     print(f"{'='*60}")
 
     # Step 1: Gatekeeper

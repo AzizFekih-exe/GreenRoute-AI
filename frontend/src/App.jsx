@@ -112,6 +112,63 @@ function AuthPage({ onLogin, BACKEND_URL }) {
   );
 }
 
+const renderBoldText = (text) => {
+  if (!text) return "";
+  const parts = text.split(/(\*\*.*?\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={idx} style={{ color: "var(--accent-color)" }}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+};
+
+const renderExplanationText = (text) => {
+  if (!text) return null;
+  
+  let cleaned = text.trim();
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  
+  const paragraphs = cleaned.split("\n\n");
+  return paragraphs.map((para, pIdx) => {
+    if (para.includes("Sources:") || para.includes("---")) {
+      const lines = para.split("\n").filter(l => l.trim().length > 0);
+      return (
+        <div key={pIdx} className="explanation-sources" style={{ borderTop: "1px dashed rgba(255,255,255,0.08)", marginTop: "12px", paddingTop: "8px" }}>
+          {lines.map((line, lIdx) => {
+            const cleanLine = line.replace(/^[*\-\s•]+/, "").trim();
+            if (cleanLine.includes("Sources:") || cleanLine.startsWith("---")) {
+              if (cleanLine.startsWith("---")) return null;
+              return <h5 key={lIdx} style={{ margin: "5px 0", color: "var(--accent-light)", fontSize: "0.85rem", fontWeight: "600" }}>{cleanLine}</h5>;
+            }
+            return <div key={lIdx} className="source-item" style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "3px 0 3px 10px", wordBreak: "break-all" }}>• {cleanLine}</div>;
+          })}
+        </div>
+      );
+    }
+    
+    if (para.includes("\n-") || para.includes("\n*") || para.includes("\n•") || para.startsWith("- ") || para.startsWith("* ") || para.startsWith("• ")) {
+      const lines = para.split("\n").filter(l => l.trim().length > 0);
+      return (
+        <ul key={pIdx} style={{ paddingLeft: "15px", margin: "8px 0", listStyleType: "disc" }}>
+          {lines.map((line, lIdx) => {
+            const cleanLine = line.replace(/^[*\-\s•]+/, "").trim();
+            return <li key={lIdx} style={{ fontSize: "0.9rem", color: "var(--text-main)", marginBottom: "4px", lineHeight: "1.4" }}>{renderBoldText(cleanLine)}</li>;
+          })}
+        </ul>
+      );
+    }
+    
+    return (
+      <p key={pIdx} className="explanation-paragraph" style={{ margin: "8px 0", lineHeight: "1.4", fontSize: "0.9rem", color: "#cbd5e0" }}>
+        {renderBoldText(para)}
+      </p>
+    );
+  });
+};
+
 function App() {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('greenroute_user');
@@ -212,10 +269,20 @@ function App() {
         throw new Error("Session expired. Please sign in again.");
       }
       if (!res.ok) {
-        throw new Error(`Server returned error status: ${res.status}`);
+        let errMsg = `Server returned error status: ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData && errData.error) {
+            errMsg = errData.error;
+          }
+        } catch (e) {}
+        throw new Error(errMsg);
       }
       const data = await res.json();
       setSession(data);
+      if (data.target_smiles) {
+        setTargetSmiles(data.target_smiles);
+      }
       if (data.recommendations && data.recommendations.length > 0) {
         setSelectedForApprove(data.recommendations[0].name);
       }
@@ -499,8 +566,10 @@ function App() {
                       )}
                     </div>
 
-                    <p className="explanation-text">"{r.explanation}"</p>
-                    <p className="yield-explanation-text">{r.yield_explanation}</p>
+                    <div className="explanation-text-container" style={{ margin: "15px 0", borderLeft: "2px solid var(--accent-color)", paddingLeft: "12px" }}>
+                      {renderExplanationText(r.explanation)}
+                    </div>
+                    <p className="yield-explanation-text" style={{ fontSize: "0.85rem", opacity: 0.8 }}>{r.yield_explanation}</p>
                     
                     <div className="card-footer">
                       <span className="source-tag">Source: {r.data_source}</span>

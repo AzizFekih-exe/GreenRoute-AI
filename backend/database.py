@@ -36,6 +36,17 @@ class SolventDatabase:
                 data_source TEXT
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                target_smiles TEXT,
+                weights_json TEXT,
+                overrides_json TEXT,
+                recommendations_json TEXT,
+                approved INTEGER DEFAULT 0,
+                approved_solvent TEXT
+            )
+        """)
         self.conn.commit()
 
     def populate_default_solvents(self):
@@ -145,6 +156,61 @@ class SolventDatabase:
                     "data_source": r[7]
                 })
         return results
+
+    def save_session(self, session_id, target_smiles, weights, overrides, recommendations):
+        import json
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT OR REPLACE INTO sessions 
+            (session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent)
+            VALUES (?, ?, ?, ?, ?, 0, NULL)
+        """, (
+            session_id,
+            target_smiles,
+            json.dumps(weights),
+            json.dumps(overrides),
+            json.dumps(recommendations)
+        ))
+        self.conn.commit()
+
+    def approve_session(self, session_id, solvent_name):
+        cursor = self.conn.cursor()
+        # Verify first if the session exists and if the solvent is in its recommendations list
+        session = self.get_session(session_id)
+        if not session:
+            return False
+        
+        recommended_names = [r["name"] for r in session["recommendations"]]
+        if solvent_name not in recommended_names:
+            return False
+
+        cursor.execute("""
+            UPDATE sessions 
+            SET approved = 1, approved_solvent = ? 
+            WHERE session_id = ?
+        """, (solvent_name, session_id))
+        self.conn.commit()
+        return True
+
+    def get_session(self, session_id):
+        import json
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent
+            FROM sessions WHERE session_id = ?
+        """, (session_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "session_id": row[0],
+            "target_smiles": row[1],
+            "weights": json.loads(row[2]),
+            "overrides": json.loads(row[3]),
+            "recommendations": json.loads(row[4]),
+            "approved": bool(row[5]),
+            "approved_solvent": row[6]
+        }
 
     def close(self):
         self.conn.close()

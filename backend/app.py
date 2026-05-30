@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from functools import wraps
 from orchestrator import Orchestrator
 from flasgger import Swagger
 
@@ -15,6 +16,133 @@ def add_cors_headers(response):
 # Initialize decision engine orchestrator
 orchestrator = Orchestrator()
 
+# Authentication Middleware
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Missing or invalid token"}), 401
+            
+        token = auth_header.split(" ")[1]
+        user = orchestrator.db.verify_token(token)
+        if not user:
+            return jsonify({"error": "Invalid or expired token"}), 401
+            
+        request.user = user
+        return f(*args, **kwargs)
+    return decorated
+
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """
+    Register a new user
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+    responses:
+      200:
+        description: Successful registration
+      400:
+        description: Registration failed
+    """
+    data = request.get_json() or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+        
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters long"}), 400
+
+    user = orchestrator.db.create_user(username, password)
+    if not user:
+        return jsonify({"error": "Username already exists"}), 400
+        
+    token = orchestrator.db.create_user_token(user["id"], user["username"])
+    return jsonify({
+        "message": "User registered successfully",
+        "token": token,
+        "username": username
+    }), 200
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """
+    Login user and return token
+    ---
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+    responses:
+      200:
+        description: Successful login
+      401:
+        description: Invalid credentials
+    """
+    data = request.get_json() or {}
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
+        
+    user = orchestrator.db.check_user_credentials(username, password)
+    if not user:
+        return jsonify({"error": "Invalid username or password"}), 401
+        
+    token = orchestrator.db.create_user_token(user["id"], user["username"])
+    return jsonify({
+        "token": token,
+        "username": username
+    }), 200
+
+@app.route('/api/auth/logout', methods=['POST'])
+@require_auth
+def logout():
+    """
+    Logout current user
+    ---
+    responses:
+      200:
+        description: Logged out successfully
+    """
+    auth_header = request.headers.get("Authorization")
+    token = auth_header.split(" ")[1]
+    orchestrator.db.delete_user_token(token)
+    return jsonify({"message": "Logged out successfully"}), 200
+
+@app.route('/api/auth/me', methods=['GET'])
+@require_auth
+def me():
+    """
+    Get current user details
+    ---
+    responses:
+      200:
+        description: User details
+    """
+    return jsonify({
+        "user_id": request.user["id"],
+        "username": request.user["username"]
+    }), 200
+
 @app.route('/health', methods=['GET'])
 def health():
     """
@@ -30,6 +158,7 @@ def health():
     })
 
 @app.route('/api/recommend', methods=['POST'])
+@require_auth
 def recommend():
     """
     Generate Solvent Recommendations
@@ -73,12 +202,13 @@ def recommend():
     overrides = data.get("overrides", {})
     
     try:
-        session = orchestrator.generate_recommendations(target_smiles, weights, overrides)
+        session = orchestrator.generate_recommendations(target_smiles, weights, overrides, user_id=request.user["id"])
         return jsonify(session)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/validate', methods=['POST'])
+@require_auth
 def validate():
     """
     Validate and Approve a Recommendation
@@ -112,13 +242,14 @@ def validate():
     if not session_id or not solvent_name:
         return jsonify({"error": "Missing session_id or solvent_name parameter"}), 400
         
-    success = orchestrator.approve_recommendation(session_id, solvent_name)
+    success = orchestrator.approve_recommendation(session_id, solvent_name, user_id=request.user["id"])
     if success:
         return jsonify(orchestrator.get_session_state(session_id))
     else:
         return jsonify({"error": "Failed to approve. Validate session_id and solvent_name."}), 400
 
 @app.route('/api/session/<session_id>', methods=['GET'])
+@require_auth
 def get_session(session_id):
     """
     Get Session State
@@ -138,6 +269,8 @@ def get_session(session_id):
     state = orchestrator.get_session_state(session_id)
     if not state:
         return jsonify({"error": "Session not found"}), 404
+    if state.get("user_id") is not None and state.get("user_id") != request.user["id"]:
+        return jsonify({"error": "Unauthorized to access this session"}), 403
     return jsonify(state)
 
 if __name__ == '__main__':

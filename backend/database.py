@@ -1,6 +1,9 @@
 import sqlite3
 import numpy as np
 import os
+import hashlib
+import secrets
+import datetime
 
 try:
     from rdkit import Chem
@@ -32,6 +35,16 @@ class SolventDatabase:
             cursor.execute("DROP TABLE IF EXISTS solvents")
             self.conn.commit()
 
+        # Migrate sessions to add user_id column if it doesn't exist
+        cursor.execute("PRAGMA table_info(sessions)")
+        session_columns = [row[1] for row in cursor.fetchall()]
+        if session_columns and "user_id" not in session_columns:
+            try:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id)")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass
+
     def create_tables(self):
         cursor = self.conn.cursor()
         cursor.execute("""
@@ -50,6 +63,25 @@ class SolventDatabase:
             )
         """)
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE,
+                password_hash TEXT,
+                salt TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_tokens (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER,
+                username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 target_smiles TEXT,
@@ -57,7 +89,8 @@ class SolventDatabase:
                 overrides_json TEXT,
                 recommendations_json TEXT,
                 approved INTEGER DEFAULT 0,
-                approved_solvent TEXT
+                approved_solvent TEXT,
+                user_id INTEGER REFERENCES users(id)
             )
         """)
         self.conn.commit()
@@ -177,27 +210,32 @@ class SolventDatabase:
                 })
         return results
 
-    def save_session(self, session_id, target_smiles, weights, overrides, recommendations):
+    def save_session(self, session_id, target_smiles, weights, overrides, recommendations, user_id=None):
         import json
         cursor = self.conn.cursor()
         cursor.execute("""
             INSERT OR REPLACE INTO sessions 
-            (session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent)
-            VALUES (?, ?, ?, ?, ?, 0, NULL)
+            (session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent, user_id)
+            VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
         """, (
             session_id,
             target_smiles,
             json.dumps(weights),
             json.dumps(overrides),
-            json.dumps(recommendations)
+            json.dumps(recommendations),
+            user_id
         ))
         self.conn.commit()
 
-    def approve_session(self, session_id, solvent_name):
+    def approve_session(self, session_id, solvent_name, user_id=None):
         cursor = self.conn.cursor()
         # Verify first if the session exists and if the solvent is in its recommendations list
         session = self.get_session(session_id)
         if not session:
+            return False
+        
+        # Verify user matches
+        if user_id is not None and session.get("user_id") != user_id:
             return False
         
         recommended_names = [r["name"] for r in session["recommendations"]]
@@ -216,7 +254,7 @@ class SolventDatabase:
         import json
         cursor = self.conn.cursor()
         cursor.execute("""
-            SELECT session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent
+            SELECT session_id, target_smiles, weights_json, overrides_json, recommendations_json, approved, approved_solvent, user_id
             FROM sessions WHERE session_id = ?
         """, (session_id,))
         row = cursor.fetchone()
@@ -229,8 +267,88 @@ class SolventDatabase:
             "overrides": json.loads(row[3]),
             "recommendations": json.loads(row[4]),
             "approved": bool(row[5]),
-            "approved_solvent": row[6]
+            "approved_solvent": row[6],
+            "user_id": row[7]
         }
+
+    # --- Authentication Helpers ---
+
+    def hash_password(self, password, salt=None):
+        if not salt:
+            salt = secrets.token_hex(16)
+        pw_hash = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            salt.encode('utf-8'),
+            100000
+        ).hex()
+        return pw_hash, salt
+
+    def create_user(self, username, password):
+        cursor = self.conn.cursor()
+        # Check if username already exists
+        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        if cursor.fetchone():
+            return None
+        
+        pw_hash, salt = self.hash_password(password)
+        try:
+            cursor.execute("""
+                INSERT INTO users (username, password_hash, salt)
+                VALUES (?, ?, ?)
+            """, (username, pw_hash, salt))
+            self.conn.commit()
+            user_id = cursor.lastrowid
+            return {"id": user_id, "username": username}
+        except sqlite3.IntegrityError:
+            return None
+
+    def check_user_credentials(self, username, password):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id, username, password_hash, salt FROM users WHERE username = ?", (username,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        user_id, uname, stored_hash, salt = row
+        computed_hash, _ = self.hash_password(password, salt)
+        if computed_hash == stored_hash:
+            return {"id": user_id, "username": uname}
+        return None
+
+    def create_user_token(self, user_id, username):
+        token = secrets.token_hex(32)
+        expires_at = (datetime.datetime.now() + datetime.timedelta(days=7)).isoformat()
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO user_tokens (token, user_id, username, expires_at)
+            VALUES (?, ?, ?, ?)
+        """, (token, user_id, username, expires_at))
+        self.conn.commit()
+        return token
+
+    def verify_token(self, token):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT user_id, username, expires_at FROM user_tokens
+            WHERE token = ?
+        """, (token,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        
+        user_id, username, expires_at = row
+        if datetime.datetime.now() > datetime.datetime.fromisoformat(expires_at):
+            # Clean up expired token
+            self.delete_user_token(token)
+            return None
+            
+        return {"id": user_id, "username": username}
+
+    def delete_user_token(self, token):
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM user_tokens WHERE token = ?", (token,))
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

@@ -1,7 +1,122 @@
 import React, { useState } from 'react';
 import './App.css';
 
+function AuthPage({ onLogin, BACKEND_URL }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    
+    const u = username.trim();
+    const p = password.trim();
+    if (!u || !p) {
+      setError('Please fill in all fields.');
+      return;
+    }
+
+    if (!isLogin && p.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setLoading(true);
+    const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+    try {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Authentication failed.');
+      }
+      onLogin(data);
+    } catch (err) {
+      setError(err.message || 'Connection to authentication server failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-page">
+      <div className="auth-card">
+        <span className="auth-logo">🧪</span>
+        <h2>{isLogin ? 'Sign In to GreenRoute AI' : 'Create Account'}</h2>
+        <p className="auth-subtitle">
+          {isLogin 
+            ? 'Access explainable green solvent optimization tools' 
+            : 'Get started with green chemistry substitution recommendations'}
+        </p>
+
+        {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>⚠️ {error}</div>}
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input 
+              type="text" 
+              id="username" 
+              className="form-input" 
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              disabled={loading}
+              placeholder="e.g. chemist_smith"
+              required 
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input 
+              type="password" 
+              id="password" 
+              className="form-input" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={loading}
+              placeholder="••••••••"
+              required 
+            />
+          </div>
+
+          <button type="submit" className="btn-auth-submit" disabled={loading}>
+            {loading ? 'Authenticating...' : isLogin ? 'Sign In' : 'Create Account'}
+          </button>
+        </form>
+
+        <div className="auth-toggle-text">
+          {isLogin ? "Don't have an account?" : "Already have an account?"}
+          <button 
+            type="button" 
+            className="auth-toggle-link"
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError('');
+              setUsername('');
+              setPassword('');
+            }}
+            disabled={loading}
+          >
+            {isLogin ? 'Sign Up' : 'Sign In'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('greenroute_user');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [targetSmiles, setTargetSmiles] = useState('CC(=O)O');
   const [weights, setWeights] = useState({
     toxicity: 0.3,
@@ -22,6 +137,29 @@ function App() {
   const [selectedForApprove, setSelectedForApprove] = useState('');
 
   const BACKEND_URL = "http://localhost:5000";
+
+  const handleLogoutLocal = () => {
+    setUser(null);
+    localStorage.removeItem('greenroute_user');
+    setSession(null);
+    setApprovedSolvent(null);
+  };
+
+  const handleLogout = async () => {
+    if (user && user.token) {
+      try {
+        await fetch(`${BACKEND_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${user.token}`
+          }
+        });
+      } catch (err) {
+        console.error("Failed to call logout API:", err);
+      }
+    }
+    handleLogoutLocal();
+  };
 
   const handleWeightChange = (key, val) => {
     setWeights(prev => ({
@@ -57,11 +195,19 @@ function App() {
     };
 
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (user && user.token) {
+        headers['Authorization'] = `Bearer ${user.token}`;
+      }
       const res = await fetch(`${BACKEND_URL}/api/recommend`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify(payload)
       });
+      if (res.status === 401) {
+        handleLogoutLocal();
+        throw new Error("Session expired. Please sign in again.");
+      }
       if (!res.ok) {
         throw new Error(`Server returned error status: ${res.status}`);
       }
@@ -80,14 +226,23 @@ function App() {
   const handleApprove = async () => {
     if (!session || !selectedForApprove) return;
     try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (user && user.token) {
+        headers['Authorization'] = `Bearer ${user.token}`;
+      }
       const res = await fetch(`${BACKEND_URL}/api/validate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({
           session_id: session.session_id,
           solvent_name: selectedForApprove
         })
       });
+      if (res.status === 401) {
+        handleLogoutLocal();
+        alert("Session expired. Please sign in again.");
+        return;
+      }
       if (res.ok) {
         setApprovedSolvent(selectedForApprove);
       } else {
@@ -99,13 +254,50 @@ function App() {
     }
   };
 
+  if (!user) {
+    return (
+      <div className="app-container">
+        <header className="app-header">
+          <div className="app-header-container">
+            <div>
+              <h1 className="title-gradient">GreenRoute AI</h1>
+              <p className="subtitle">
+                An Explainable, Human-in-the-Loop System for Green Solvent Substitution & Synthesis Optimisation
+              </p>
+            </div>
+          </div>
+        </header>
+        <AuthPage 
+          BACKEND_URL={BACKEND_URL} 
+          onLogin={(userData) => {
+            setUser(userData);
+            localStorage.setItem('greenroute_user', JSON.stringify(userData));
+          }} 
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1 className="title-gradient">GreenRoute AI</h1>
-        <p className="subtitle">
-          An Explainable, Human-in-the-Loop System for Green Solvent Substitution & Synthesis Optimisation
-        </p>
+        <div className="app-header-container">
+          <div>
+            <h1 className="title-gradient">GreenRoute AI</h1>
+            <p className="subtitle">
+              An Explainable, Human-in-the-Loop System for Green Solvent Substitution & Synthesis Optimisation
+            </p>
+          </div>
+          <div className="header-right">
+            <div className="user-profile-badge">
+              <div className="user-avatar">{user.username.charAt(0).toUpperCase()}</div>
+              <span>👤 {user.username}</span>
+            </div>
+            <button onClick={handleLogout} className="btn-logout">
+              Logout
+            </button>
+          </div>
+        </div>
       </header>
 
       <div className="main-content">

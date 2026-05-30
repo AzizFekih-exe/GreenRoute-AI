@@ -15,7 +15,7 @@ class Orchestrator:
         self.yield_predictor = YieldPredictor()
         self.qsar_classifier = QSARClassifier()
 
-    def generate_recommendations(self, target_smiles: str, weights: dict, overrides: dict = None) -> dict:
+    def generate_recommendations(self, target_smiles: str, weights: dict, overrides: dict = None, user_id: int = None) -> dict:
         """
         1. Retrieves all solvents from database.
         2. Applies chemical parameter overrides (e.g. force solvent, exclude highly toxic).
@@ -124,7 +124,7 @@ class Orchestrator:
         
         # Initialize validation session for HITL tracking
         session_id = str(uuid.uuid4())
-        self.db.save_session(session_id, target_smiles, weights, overrides, top_3)
+        self.db.save_session(session_id, target_smiles, weights, overrides, top_3, user_id)
         
         session = {
             "session_id": session_id,
@@ -133,15 +133,16 @@ class Orchestrator:
             "overrides": overrides,
             "recommendations": top_3,
             "approved": False,
-            "approved_solvent": None
+            "approved_solvent": None,
+            "user_id": user_id
         }
         return session
 
-    def approve_recommendation(self, session_id: str, solvent_name: str) -> bool:
+    def approve_recommendation(self, session_id: str, solvent_name: str, user_id: int = None) -> bool:
         """
         Transitions the validation state of the recommendation to 'Approved' in SQLite database.
         """
-        return self.db.approve_session(session_id, solvent_name)
+        return self.db.approve_session(session_id, solvent_name, user_id)
 
     def get_session_state(self, session_id: str) -> dict:
         state = self.db.get_session(session_id)

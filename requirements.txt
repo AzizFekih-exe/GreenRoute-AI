@@ -7,3 +7,5 @@ rdkit>=2022.03.1
 faiss-cpu>=1.7.0
 requests>=2.28.0
 flasgger>=0.9.7
+joblib
+scipy

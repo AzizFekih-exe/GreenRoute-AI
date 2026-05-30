@@ -31,12 +31,13 @@ MANIFEST
 .coverage
 .coverage.*
 *.cover
-.pytest_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints
 
-# virtualenv
+# Environments
+.env
+.venv
 .venv/
 venv/
 ENV/
@@ -54,3 +55,18 @@ env/
 *.sqlite
 *.db
 *.log
+
+# Data and Models (Large files)
+data/
+*.pkl
+*.idx
+yield_predictor.pkl
+scaler.pkl
+
+# Logs and temporary files
+output.txt
+.antigravity/
+
+# OS generated files
+.DS_Store
+Thumbs.db

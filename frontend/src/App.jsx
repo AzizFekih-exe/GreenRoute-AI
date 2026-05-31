@@ -174,6 +174,32 @@ const renderExplanationText = (text) => {
   });
 };
 
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4.5 5.5C4.5 4.12 5.62 3 7 3h10c1.38 0 2.5 1.12 2.5 2.5v7c0 1.38-1.12 2.5-2.5 2.5h-4.25L8 19v-4H7c-1.38 0-2.5-1.12-2.5-2.5v-7Z" />
+      <path d="M8 8h8M8 11h5.5" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M4 12.5 20 5l-4.5 14-3.2-5.3L4 12.5Z" />
+      <path d="m12.3 13.7 3.9-4.2" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="m7 7 10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
 function App() {
   const [user, setUser] = useState(() => {
     const saved = localStorage.getItem('greenroute_user');
@@ -202,6 +228,16 @@ function App() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [routes, setRoutes] = useState([]);
   const [routesLoading, setRoutesLoading] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const [chatMessages, setChatMessages] = useState([
+    {
+      role: 'assistant',
+      content: 'Hi, I can help with chemistry, molecule properties, toxicity, and GreenRoute results.'
+    }
+  ]);
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
 
@@ -226,6 +262,46 @@ function App() {
       }
     }
     handleLogoutLocal();
+  };
+
+  const handleChatSubmit = async (e) => {
+    e.preventDefault();
+    const message = chatInput.trim();
+    if (!message || chatLoading) return;
+
+    setChatInput('');
+    setChatError('');
+    setChatMessages(prev => [...prev, { role: 'user', content: message }]);
+    setChatLoading(true);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${user.token}`
+        },
+        body: JSON.stringify({ message })
+      });
+
+      const data = await res.json();
+      if (res.status === 401) {
+        handleLogoutLocal();
+        throw new Error("Session expired. Please sign in again.");
+      }
+      if (!res.ok) {
+        throw new Error(data.error || 'Chatbot failed to answer.');
+      }
+
+      setChatMessages(prev => [
+        ...prev,
+        { role: 'assistant', content: data.answer || 'I did not receive a response.' }
+      ]);
+    } catch (err) {
+      setChatError(err.message || 'Could not reach the chatbot.');
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   const handleWeightChange = (key, val) => {
@@ -789,6 +865,64 @@ function App() {
             </section>
           )}
         </main>
+      </div>
+
+      <div className={`chat-widget ${chatOpen ? 'open' : ''}`}>
+        {chatOpen && (
+          <section className="chat-panel" aria-label="GreenRoute chatbot">
+            <div className="chat-panel-header">
+              <div>
+                <strong>GreenRoute Assistant</strong>
+                <span>Chemistry support agent</span>
+              </div>
+              <button
+                type="button"
+                className="chat-icon-button"
+                onClick={() => setChatOpen(false)}
+                aria-label="Close chatbot"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="chat-messages">
+              {chatMessages.map((msg, idx) => (
+                <div key={`${msg.role}-${idx}`} className={`chat-message ${msg.role}`}>
+                  {msg.content}
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="chat-message assistant chat-loading">Thinking...</div>
+              )}
+            </div>
+
+            {chatError && <div className="chat-error">{chatError}</div>}
+
+            <form className="chat-form" onSubmit={handleChatSubmit}>
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about a molecule or solvent..."
+                maxLength={2000}
+                disabled={chatLoading}
+              />
+              <button type="submit" disabled={chatLoading || !chatInput.trim()} aria-label="Send message">
+                <SendIcon />
+              </button>
+            </form>
+          </section>
+        )}
+
+        <button
+          type="button"
+          className="chat-launcher"
+          onClick={() => setChatOpen(prev => !prev)}
+          aria-label={chatOpen ? 'Hide chatbot' : 'Open chatbot'}
+          aria-expanded={chatOpen}
+        >
+          <ChatIcon />
+        </button>
       </div>
     </div>
   );

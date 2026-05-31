@@ -18,6 +18,7 @@ The system is intentionally human-in-the-loop: it recommends and explains, but a
   - 15% step reduction
 - Template-based XAI explanations, uncertainty intervals, warnings, and source traceability.
 - Authentication, token-based sessions, approval workflow, and experiment history.
+- Floating chemistry chatbot backed by the integrated AI agent pipeline.
 
 ## Team Roles
 
@@ -36,6 +37,12 @@ React + Vite UI (localhost:8501)
     | REST/JSON + Bearer token
     v
 Flask API (localhost:5000)
+    |
+    |-- Chat agent pipeline
+    |   |-- Gatekeeper
+    |   |-- Librarian: RDKit, PubChem, optional Supabase RAG
+    |   |-- Researcher: optional Tavily web search
+    |   `-- Constructor: Groq response synthesis
     |
     v
 Orchestrator
@@ -75,6 +82,17 @@ python backend/app.py
 
 Backend URL: `http://localhost:5000`
 
+Optional chatbot services are configured in `src/ai_agents_1/.env`. Copy `src/ai_agents_1/.env.example` and fill only the keys you plan to use:
+
+```env
+GROQ_API_KEY=
+TAVILY_API_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+`GROQ_API_KEY` is required for final chatbot answer synthesis. Tavily and Supabase are optional enrichments; the app will skip them if they are not configured.
+
 ### Frontend
 
 ```bash
@@ -110,6 +128,7 @@ The SQLite database is generated automatically. Docker stores it at `/app/data/s
 - `POST /api/auth/login`: authenticate and return a token.
 - `POST /api/auth/logout`: invalidate the current token.
 - `GET /api/auth/me`: return the authenticated user.
+- `POST /api/chat`: ask the authenticated chemistry chatbot.
 - `POST /api/recommend`: generate solvent recommendations.
 - `POST /api/routes`: return ranked synthesis routes.
 - `POST /api/validate`: approve one recommendation.
@@ -123,6 +142,8 @@ The SQLite database is generated automatically. Docker stores it at `/app/data/s
 backend/              Flask API, database, scoring, models, XAI logic
 frontend/             React/Vite user interface
 src/ai_agents/        Optional AI deep-dive helpers
+src/ai_agents_1/      Integrated chemistry chatbot agent pipeline
+src/static/           Standalone teammate chatbot HTML prototype
 src/tox21/            Tox21 compound metadata used for traceability
 src/tox21_loader.py   Tox21 metadata loader
 docker-compose.yml    Local full-stack orchestration

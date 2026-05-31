@@ -177,6 +177,33 @@ def health():
         "service": "GreenRoute-AI Backend API"
     })
 
+@app.route('/api/chat', methods=['POST'])
+@require_auth
+def chat():
+    """
+    Ask the integrated chemoinformatics assistant a question.
+    """
+    data = request.get_json() or {}
+    message = str(data.get("message", "")).strip()
+
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+
+    if len(message) > 2000:
+        return jsonify({"error": "Message is too long. Please keep it under 2000 characters."}), 400
+
+    try:
+        from src.ai_agents_1.agents import run_pipeline
+        answer = run_pipeline(message)
+        return jsonify({"answer": answer}), 200
+    except ImportError as e:
+        return jsonify({
+            "error": "Chatbot dependencies are not installed. Run pip install -r requirements.txt.",
+            "details": str(e)
+        }), 500
+    except Exception as e:
+        return jsonify({"error": f"Chatbot failed to answer: {e}"}), 500
+
 @app.route('/api/recommend', methods=['POST'])
 @require_auth
 def recommend():

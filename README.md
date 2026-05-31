@@ -19,6 +19,15 @@ The system is intentionally human-in-the-loop: it recommends and explains, but a
 - Template-based XAI explanations, uncertainty intervals, warnings, and source traceability.
 - Authentication, token-based sessions, approval workflow, and experiment history.
 
+## Team Roles
+
+| Member | Role | Main Responsibility |
+| --- | --- | --- |
+| Jesser Slimi| Chemistry / Data Lead | Green chemistry criteria, solvent and route metrics, scientific justification. |
+| Ahmed Benmim | AI / ML Lead | Molecular validation, prediction logic, uncertainty handling, and chemoinformatics support. |
+| Aziz Fekih | Backend / Integration Lead | Flask API, database, authentication, orchestration, and Docker setup. |
+| Emen Slimi | Frontend / UX Lead | React interface, workflow design, result cards, route ranking display, and HITL UX. |
+
 ## Architecture
 
 ```text
@@ -43,8 +52,6 @@ SQLite database
     |-- sessions
     |-- experiment history
 ```
-
-Optional AI-agent deep-dive support exists under `src/ai_agents/`, but the core scientific ranking does not depend on an LLM. Keep API keys in a local `.env`; do not commit secrets.
 
 ## Security Notes
 

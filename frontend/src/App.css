@@ -762,3 +762,26 @@ body {
 .history-metric strong {
   font-size: 1rem;
 }
+
+.route-ranking-note {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background: rgba(0, 255, 135, 0.05);
+  border-left: 3px solid var(--accent-color);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.route-ranking-note strong {
+  color: var(--accent-color);
+}
+
+.route-ranking-note p {
+  margin: 0;
+}
+
+.route-ranking-note p + p {
+  margin-top: 8px;
+}

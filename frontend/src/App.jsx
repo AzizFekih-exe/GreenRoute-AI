@@ -676,6 +676,10 @@ function App() {
                       
                       <div className="metrics-box" style={{marginTop: "15px"}}>
                         <div className="metric-row">
+                          <span>Ranking Score:</span>
+                          <strong className="score-val">{rt.ranking_score ?? 'N/A'}/100</strong>
+                        </div>
+                        <div className="metric-row">
                           <span>⚛️ Atom Economy:</span>
                           <strong style={{color: "var(--accent-color)"}}>{rt.atom_economy}%</strong>
                         </div>
@@ -690,21 +694,32 @@ function App() {
                       </div>
                       
                       <div style={{marginTop: "15px", padding: "12px", background: "rgba(0, 255, 135, 0.05)", borderRadius: "8px", borderLeft: "3px solid var(--accent-color)"}}>
-                        <p style={{fontSize: "0.85rem", margin: 0, lineHeight: "1.4"}}>
-                          <strong style={{color: "var(--accent-color)"}}>Why this rank?</strong><br/>
-                          {idx === 0 
-                            ? `This is the optimal route. It achieves the highest Atom Economy (${rt.atom_economy}%) and the lowest E-factor (${rt.e_factor_real}), meaning the vast majority of reactant atoms end up in the final product with minimal waste generation.` 
-                            : idx === 1
-                            ? `This route is a balanced compromise. While its Atom Economy (${rt.atom_economy}%) is lower than the top route, it still significantly outperforms classical methods with an acceptable E-factor of ${rt.e_factor_real}.`
-                            : `This classical route is shown as a baseline comparison. It has poor Atom Economy (${rt.atom_economy}%) and generates significant waste (E-factor: ${rt.e_factor_real}), highlighting the need for the greener alternatives ranked above.`
-                          }
-                        </p>
+                        <div style={{fontSize: "0.82rem", lineHeight: "1.45", padding: "10px", background: "rgba(0,0,0,0.18)", borderRadius: "6px"}}>
+                          <strong style={{color: "var(--accent-color)"}}>Why this rank?</strong>
+                          <div><strong>Calculation:</strong> {rt.ranking_formula || 'Not available'}</div>
+                          {rt.score_components && (
+                            <div style={{marginTop: "6px"}}>
+                              Components: AE={rt.score_components.atom_economy_normalized}, E-factor={rt.score_components.e_factor_normalized}, Steps={rt.score_components.steps_normalized}
+                            </div>
+                          )}
+                          <div style={{marginTop: "6px"}}>
+                            <strong>Argument:</strong> {rt.ranking_argument || 'This route is ranked from atom economy, E-factor, and step-count trade-offs.'}
+                          </div>
+                        </div>
                       </div>
                       <div className="card-footer">
                         <span className="source-tag">Source: {rt.data_source}</span>
                       </div>
                     </div>
                   ))}
+                  <div className="route-ranking-note">
+                    <p>
+                      <strong>Scoring formula:</strong> Ranking score = 45% atom economy + 40% E-factor reduction + 15% step reduction. Lower E-factor and fewer steps are normalized so the best route gets 1.000 and the worst gets 0.000.
+                    </p>
+                    <p>
+                      <strong>Interpretation:</strong> Routes are not ranked by description text. They are ranked by the weighted score shown on each card, where high atom economy keeps more reactant mass in the product, low E-factor means less waste per product mass, and fewer steps reduce handling, purification, and energy burden.
+                    </p>
+                  </div>
                 </div>
               )}
             </section>

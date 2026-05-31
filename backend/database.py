@@ -159,10 +159,10 @@ class SolventDatabase:
 
     def get_synthesis_routes(self, target_smiles: str) -> list:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT route_name, steps, atom_economy, e_factor_real, description, data_source FROM synthesis_routes WHERE target_smiles = ? OR target_smiles = 'ANY' ORDER BY atom_economy DESC", (target_smiles,))
-        routes = []
+        cursor.execute("SELECT route_name, steps, atom_economy, e_factor_real, description, data_source FROM synthesis_routes WHERE target_smiles = ? OR target_smiles = 'ANY'", (target_smiles,))
+        raw_routes = []
         for row in cursor.fetchall():
-            routes.append({
+            raw_routes.append({
                 "route_name": row[0],
                 "steps": row[1],
                 "atom_economy": row[2],
@@ -170,6 +170,56 @@ class SolventDatabase:
                 "description": row[4],
                 "data_source": row[5]
             })
+
+        if not raw_routes:
+            return []
+
+        min_e_factor = min(route["e_factor_real"] for route in raw_routes)
+        max_e_factor = max(route["e_factor_real"] for route in raw_routes)
+        min_steps = min(route["steps"] for route in raw_routes)
+        max_steps = max(route["steps"] for route in raw_routes)
+
+        e_factor_range = max(max_e_factor - min_e_factor, 1e-9)
+        steps_range = max(max_steps - min_steps, 1e-9)
+        weights = {
+            "atom_economy": 0.45,
+            "e_factor": 0.40,
+            "steps": 0.15
+        }
+
+        classical_route = max(raw_routes, key=lambda route: route["e_factor_real"])
+        routes = []
+        for route in raw_routes:
+            atom_score = route["atom_economy"] / 100.0
+            e_factor_score = 1.0 - ((route["e_factor_real"] - min_e_factor) / e_factor_range)
+            step_score = 1.0 - ((route["steps"] - min_steps) / steps_range)
+            ranking_score = (
+                weights["atom_economy"] * atom_score
+                + weights["e_factor"] * e_factor_score
+                + weights["steps"] * step_score
+            )
+
+            route["score_components"] = {
+                "atom_economy_normalized": round(atom_score, 3),
+                "e_factor_normalized": round(e_factor_score, 3),
+                "steps_normalized": round(step_score, 3),
+                "weights": weights
+            }
+            route["ranking_score"] = round(ranking_score * 100.0, 1)
+            route["ranking_formula"] = (
+                f"(0.45 x {atom_score:.3f}) + "
+                f"(0.40 x {e_factor_score:.3f}) + "
+                f"(0.15 x {step_score:.3f}) = {ranking_score:.3f}"
+            )
+            route["ranking_argument"] = (
+                f"Compared with the classical baseline, this route changes atom economy by "
+                f"{route['atom_economy'] - classical_route['atom_economy']:+.1f} percentage points, "
+                f"changes E-factor by {route['e_factor_real'] - classical_route['e_factor_real']:+.1f}, "
+                f"and changes the number of reaction steps by {route['steps'] - classical_route['steps']:+d}."
+            )
+            routes.append(route)
+
+        routes.sort(key=lambda route: route["ranking_score"], reverse=True)
         return routes
 
     def get_all_solvents(self):

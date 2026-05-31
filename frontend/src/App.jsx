@@ -688,6 +688,18 @@ function App() {
                           <strong>{rt.steps}</strong>
                         </div>
                       </div>
+                      
+                      <div style={{marginTop: "15px", padding: "12px", background: "rgba(0, 255, 135, 0.05)", borderRadius: "8px", borderLeft: "3px solid var(--accent-color)"}}>
+                        <p style={{fontSize: "0.85rem", margin: 0, lineHeight: "1.4"}}>
+                          <strong style={{color: "var(--accent-color)"}}>Why this rank?</strong><br/>
+                          {idx === 0 
+                            ? `This is the optimal route. It achieves the highest Atom Economy (${rt.atom_economy}%) and the lowest E-factor (${rt.e_factor_real}), meaning the vast majority of reactant atoms end up in the final product with minimal waste generation.` 
+                            : idx === 1
+                            ? `This route is a balanced compromise. While its Atom Economy (${rt.atom_economy}%) is lower than the top route, it still significantly outperforms classical methods with an acceptable E-factor of ${rt.e_factor_real}.`
+                            : `This classical route is shown as a baseline comparison. It has poor Atom Economy (${rt.atom_economy}%) and generates significant waste (E-factor: ${rt.e_factor_real}), highlighting the need for the greener alternatives ranked above.`
+                          }
+                        </p>
+                      </div>
                       <div className="card-footer">
                         <span className="source-tag">Source: {rt.data_source}</span>
                       </div>

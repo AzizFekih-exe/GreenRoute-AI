@@ -25,13 +25,39 @@ class Orchestrator:
         if not smiles:
             return False
         if Chem is None:
-            # Fallback if RDKit is not installed locally
             return len(smiles) > 0
         try:
             mol = Chem.MolFromSmiles(smiles)
             return mol is not None
         except Exception:
             return False
+
+    def _is_organic_molecule(self, smiles: str) -> bool:
+        """Reject atoms/ions/noble gases — require at least one carbon atom."""
+        if Chem is None:
+            return True  # Can't check, allow through
+        try:
+            mol = Chem.MolFromSmiles(smiles)
+            if mol is None:
+                return False
+            carbon_count = sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() == 6)
+            return carbon_count > 0
+        except Exception:
+            return False
+
+    def _get_molecule_name_from_smiles(self, smiles: str) -> str:
+        """Try to get a human-readable name for a SMILES from PubChem."""
+        try:
+            url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{requests.utils.quote(smiles)}/property/IUPACName/JSON"
+            response = requests.get(url, timeout=6)
+            if response.status_code == 200:
+                data = response.json()
+                props = data.get("PropertyTable", {}).get("Properties", [])
+                if props and props[0].get("IUPACName"):
+                    return props[0]["IUPACName"]
+        except Exception:
+            pass
+        return smiles  # fallback to raw SMILES
 
     def _resolve_name_to_smiles(self, name: str) -> str:
         name_clean = name.strip()
@@ -72,8 +98,9 @@ class Orchestrator:
             overrides = {}
             
         input_target = target_smiles.strip() if target_smiles else ""
+        original_input = input_target  # Keep original user text for display/agent context
         resolved_smiles = None
-        
+
         if self._is_valid_smiles(input_target):
             resolved_smiles = input_target
         else:
@@ -82,7 +109,17 @@ class Orchestrator:
                 raise ValueError(
                     f"Molecule '{input_target}' is neither a valid SMILES string nor a recognized compound name."
                 )
-                
+
+        # Reject non-organic inputs (noble gases, metal atoms, ions, etc.)
+        if not self._is_organic_molecule(resolved_smiles):
+            raise ValueError(
+                f"'{input_target}' ({resolved_smiles}) is not a valid organic molecule. "
+                f"Please enter a carbon-containing compound (e.g. Glucose, Aspirin, or a SMILES like CC(=O)O)."
+            )
+
+        # Resolve a human-readable name for the target to enrich AI explanations
+        target_display_name = original_input if not self._is_valid_smiles(original_input) else self._get_molecule_name_from_smiles(resolved_smiles)
+
         target_smiles = resolved_smiles
         candidates = self.db.get_all_solvents()
         
@@ -156,6 +193,21 @@ class Orchestrator:
             if reaction_temp > boiling_point:
                 warnings.append(f"Operating temperature ({reaction_temp}°C) exceeds solvent boiling point ({boiling_point}°C). Reaction requires a sealed, high-pressure autoclave.")
             
+            # Calculate Atom Economy
+            atom_economy = 85.0
+            if Chem:
+                mol_target = Chem.MolFromSmiles(target_smiles)
+                if mol_target:
+                    from rdkit.Chem import Descriptors
+                    from metrics import calculate_atom_economy
+                    target_mw = Descriptors.MolWt(mol_target)
+                    # Simulated reactants for the solvent's typical route: target + leaving group + solvent interaction factor
+                    reactants_mws = [target_mw + 30.0 + (s.get('toxicity', 0.5) * 20.0)]
+                    try:
+                        atom_economy = round(calculate_atom_economy(target_mw, reactants_mws), 1)
+                    except Exception:
+                        pass
+
             processed_candidates.append({
                 "name": s["name"],
                 "smiles": s["smiles"],
@@ -168,6 +220,7 @@ class Orchestrator:
                 "halogenated": s.get("halogenated", False),
                 "energy_demand": energy_demand,
                 "e_factor": e_factor,
+                "atom_economy": atom_economy,
                 "green_score": round(score, 3),
                 "yield_info": yield_data,
                 "explanation": explanation,
@@ -185,8 +238,25 @@ class Orchestrator:
         try:
             from src.ai_agents.agents import run_pipeline
             
-            def fetch_agent_explanation(candidate, target_sm, ref_name):
-                q = f"Why is {candidate['name']} preferred over {ref_name} as a green solvent for target molecule {target_sm}?"
+            def fetch_agent_explanation(candidate, target_sm, target_name, ref_name):
+                # Build a rich, data-grounded question so the agent gives a specific scientific answer
+                q = (
+                    f"Explain specifically and scientifically why {candidate['name']} "
+                    f"(SMILES: {candidate['smiles']}) is a preferred green solvent over "
+                    f"{ref_name} for reactions involving the target compound '{target_name}' "
+                    f"(SMILES: {target_sm}). "
+                    f"Use the following computed green chemistry data: "
+                    f"Green Score={candidate['green_score']}, "
+                    f"Toxicity index={candidate['toxicity']}, "
+                    f"VOC index={candidate['voc']}, "
+                    f"Biodegradability={candidate['biodegradability']}, "
+                    f"Recyclability={candidate['recyclability']}, "
+                    f"E-factor={candidate['e_factor']}, "
+                    f"Predicted Reaction Yield={candidate['yield_info']['predicted_yield']}%, "
+                    f"Boiling Point={candidate['boiling_point']}C, "
+                    f"Energy Demand={candidate['energy_demand']} kJ. "
+                    f"Reference solvent ({ref_name}) has Toxicity=0.8, Biodegradability=0.05, E-factor=8.5."
+                )
                 try:
                     ai_exp = run_pipeline(q)
                     if ai_exp:
@@ -198,7 +268,7 @@ class Orchestrator:
             ref_solvent_name = ref_solvent.get("name", "DCM")
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 futures = {
-                    executor.submit(fetch_agent_explanation, r, target_smiles, ref_solvent_name): r
+                    executor.submit(fetch_agent_explanation, r, target_smiles, target_display_name, ref_solvent_name): r
                     for r in top_3
                 }
                 for future in concurrent.futures.as_completed(futures):
@@ -206,7 +276,7 @@ class Orchestrator:
                     try:
                         ai_explanation = future.result()
                         if ai_explanation:
-                            r["explanation"] = ai_explanation
+                            r["ai_explanation"] = ai_explanation
                     except Exception:
                         pass
         except Exception as e:

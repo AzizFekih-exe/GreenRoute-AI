@@ -15,7 +15,24 @@ def researcher(question: str) -> dict:
         return {"success": False, "content": "", "sources": [], "error": "No API key"}
 
     try:
-        search_query = f"{question} (chemistry OR biology OR tox21 OR pharmacology)"
+        # Build a short search query from key terms to stay under Tavily's 400-char limit.
+        # The full question is verbose (includes metrics); extract chemical names only.
+        import re as _re
+        # Grab: solvent name (after "why "), target compound name (after "compound '"), reference (after "over ")
+        solvent_match = _re.search(r"why\s+([\w\s\-]+?)\s+\(SMILES", question, _re.IGNORECASE)
+        target_match = _re.search(r"compound '([^']+)'", question, _re.IGNORECASE)
+        ref_match = _re.search(r"over\s+([\w\s]+)\s+for\s+reactions", question, _re.IGNORECASE)
+        solvent_name = solvent_match.group(1).strip() if solvent_match else ""
+        target_name = target_match.group(1).strip() if target_match else ""
+        ref_name = ref_match.group(1).strip() if ref_match else "DCM"
+
+        if solvent_name and target_name:
+            search_query = f"green solvent {solvent_name} vs {ref_name} for {target_name} green chemistry toxicity biodegradability"
+        else:
+            # Fallback: truncate the raw question
+            search_query = question[:380]
+
+        search_query = search_query[:390]  # Hard cap just in case
         result = tavily_client.search(
             query=search_query,
             search_depth="basic",

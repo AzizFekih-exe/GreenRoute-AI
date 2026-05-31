@@ -2,15 +2,11 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package descriptors from context
-COPY frontend/package.json ./
-
-# Install npm packages
+COPY frontend/package*.json ./
 RUN npm install
 
-# Copy frontend source files
-COPY frontend/ ./
+COPY frontend/ .
 
 EXPOSE 8501
 
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "dev", "--", "--port", "8501", "--host", "0.0.0.0"]

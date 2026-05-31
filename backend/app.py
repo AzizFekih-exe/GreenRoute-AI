@@ -223,6 +223,22 @@ def recommend():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/routes', methods=['POST'])
+@require_auth
+def get_routes():
+    """
+    Get Synthesis Routes for a Target Molecule
+    """
+    data = request.get_json() or {}
+    target_smiles = data.get("target_smiles")
+    if not target_smiles:
+        return jsonify({"error": "Missing target_smiles parameter"}), 400
+    try:
+        routes = orchestrator.db.get_synthesis_routes(target_smiles)
+        return jsonify({"routes": routes}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/validate', methods=['POST'])
 @require_auth
 def validate():

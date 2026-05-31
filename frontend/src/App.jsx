@@ -195,6 +195,8 @@ function App() {
   const [activeTab, setActiveTab] = useState('optimization');
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [routes, setRoutes] = useState([]);
+  const [routesLoading, setRoutesLoading] = useState(false);
 
   const BACKEND_URL = "http://localhost:5000";
 
@@ -312,6 +314,29 @@ function App() {
     }
   };
 
+  const fetchRoutes = async (smilesQuery) => {
+    setRoutesLoading(true);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (user && user.token) {
+        headers['Authorization'] = `Bearer ${user.token}`;
+      }
+      const res = await fetch(`${BACKEND_URL}/api/routes`, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ target_smiles: smilesQuery })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setRoutes(data.routes || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch routes:', err);
+    } finally {
+      setRoutesLoading(false);
+    }
+  };
+
   const handleApprove = async () => {
     if (!session || !selectedForApprove) return;
     try {
@@ -419,6 +444,12 @@ function App() {
               onClick={() => setActiveTab('optimization')}
             >
               🧪 Optimization
+            </button>
+            <button
+              className={`sidebar-nav-btn ${activeTab === 'routes' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('routes'); fetchRoutes(targetSmiles); }}
+            >
+              🛣️ Synthesis Routes
             </button>
             <button
               className={`sidebar-nav-btn ${activeTab === 'history' ? 'active' : ''}`}
@@ -544,11 +575,11 @@ function App() {
                       </div>
                       <div className="metric-row">
                         <span>Predicted Yield:</span>
-                        <strong>{r.yield_info.predicted_yield}%</strong>
+                        <strong>{r.yield_info.predicted_yield}% ± {r.yield_info.uncertainty_std}%</strong>
                       </div>
                       <div className="metric-row">
-                        <span>Confidence Bounds:</span>
-                        <span>{r.yield_info.confidence_interval[0]}% - {r.yield_info.confidence_interval[1]}%</span>
+                        <span>⚛️ Atom Economy:</span>
+                        <strong>{r.atom_economy}%</strong>
                       </div>
                       <div className="metric-row">
                         <span>🌡️ Boiling Point:</span>
@@ -569,10 +600,22 @@ function App() {
                     <div className="explanation-text-container" style={{ margin: "15px 0", borderLeft: "2px solid var(--accent-color)", paddingLeft: "12px" }}>
                       {renderExplanationText(r.explanation)}
                     </div>
+                    {r.ai_explanation && (
+                      <details className="ai-explanation-accordion" style={{ margin: "10px 0", padding: "10px", background: "rgba(255,255,255,0.05)", borderRadius: "8px" }}>
+                        <summary style={{ cursor: "pointer", fontWeight: "bold", color: "var(--accent-color)" }}>🤖 AI Deep-Dive Analysis</summary>
+                        <div style={{ marginTop: "10px", fontSize: "0.9rem", lineHeight: "1.5" }}>
+                          {renderExplanationText(r.ai_explanation)}
+                        </div>
+                      </details>
+                    )}
                     <p className="yield-explanation-text" style={{ fontSize: "0.85rem", opacity: 0.8 }}>{r.yield_explanation}</p>
                     
                     <div className="card-footer">
-                      <span className="source-tag">Source: {r.data_source}</span>
+                      <span className="source-tag">
+                        Source: {r.data_source}
+                        {' | '}
+                        <a href={`https://pubchem.ncbi.nlm.nih.gov/#query=${encodeURIComponent(r.smiles)}`} target="_blank" rel="noreferrer" style={{color: "var(--accent-color)"}}>View on PubChem</a>
+                      </span>
                     </div>
 
                     {r.warnings && r.warnings.map((w, wIdx) => (
@@ -611,6 +654,49 @@ function App() {
             </div>
           )}
           </>)}
+
+          {activeTab === 'routes' && (
+            <section className="routes-section">
+              <h2 className="history-title">🛣️ Synthesis Route Optimisation</h2>
+              <p className="history-subtitle">Ranked alternative synthesis pathways for target <code>{targetSmiles}</code>, optimized for Atom Economy and E-factor.</p>
+              {routesLoading ? (
+                <div className="history-loading">Analyzing chemical pathways...</div>
+              ) : routes.length === 0 ? (
+                <div className="history-empty">
+                  <span className="history-empty-icon">🔬</span>
+                  <p>No routes found for this molecule.</p>
+                </div>
+              ) : (
+                <div className="cards-grid">
+                  {routes.map((rt, idx) => (
+                    <div key={idx} className="glass-card recommendation-card">
+                      <div className="badge rank-badge">Rank {idx + 1}</div>
+                      <h3 className="solvent-name">{rt.route_name}</h3>
+                      <p style={{marginTop: "5px", fontSize: "0.9rem", color: "var(--text-muted)"}}>{rt.description}</p>
+                      
+                      <div className="metrics-box" style={{marginTop: "15px"}}>
+                        <div className="metric-row">
+                          <span>⚛️ Atom Economy:</span>
+                          <strong style={{color: "var(--accent-color)"}}>{rt.atom_economy}%</strong>
+                        </div>
+                        <div className="metric-row">
+                          <span>🗑️ Real E-factor:</span>
+                          <strong>{rt.e_factor_real}</strong>
+                        </div>
+                        <div className="metric-row">
+                          <span>🔄 Reaction Steps:</span>
+                          <strong>{rt.steps}</strong>
+                        </div>
+                      </div>
+                      <div className="card-footer">
+                        <span className="source-tag">Source: {rt.data_source}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
 
           {activeTab === 'history' && (
             <section className="history-section">

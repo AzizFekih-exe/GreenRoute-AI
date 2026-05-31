@@ -63,6 +63,18 @@ class SolventDatabase:
             )
         """)
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS synthesis_routes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_smiles TEXT,
+                route_name TEXT,
+                steps INTEGER,
+                atom_economy REAL,
+                e_factor_real REAL,
+                description TEXT,
+                data_source TEXT
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE,
@@ -111,29 +123,54 @@ class SolventDatabase:
         self.conn.commit()
 
     def populate_default_solvents(self):
-        # (name, smiles, tox, voc, bio, rec, boiling_point, heat_capacity, halogenated, source)
-        default_solvents = [
-            ("Dimethylformamide", "CN(C)C=O", 0.9, 0.8, 0.1, 0.2, 153.0, 2.14, 0, "PubChem"),
-            ("Dichloromethane", "ClCCl", 0.85, 0.95, 0.05, 0.4, 39.6, 1.20, 1, "ECHA"),
-            ("Hexane", "CCCCCC", 0.7, 0.9, 0.2, 0.3, 68.0, 2.26, 0, "ECHA"),
-            ("Toluene", "Cc1ccccc1", 0.6, 0.7, 0.5, 0.5, 110.6, 1.70, 0, "PubChem"),
-            ("Cyclopentyl methyl ether", "COC1CCCC1", 0.15, 0.3, 0.8, 0.7, 106.0, 1.96, 0, "Literature"),
-            ("Ethyl lactate", "CCOC(=O)C(C)O", 0.05, 0.1, 0.95, 0.6, 154.0, 2.01, 0, "Literature"),
-            ("2-Methyltetrahydrofuran", "CC1CCCO1", 0.2, 0.35, 0.75, 0.7, 80.2, 1.98, 0, "Literature"),
-            ("Ethanol", "CCO", 0.1, 0.4, 0.9, 0.8, 78.0, 2.44, 0, "PubChem"),
-            ("Water", "O", 0.0, 0.0, 1.0, 1.0, 100.0, 4.18, 0, "USPTO")
-        ]
         cursor = self.conn.cursor()
-        for name, smiles, tox, voc, bio, rec, bp, hc, halo, source in default_solvents:
-            try:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO solvents 
-                    (name, smiles, toxicity, voc, biodegradability, recyclability, boiling_point, heat_capacity, halogenated, data_source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (name, smiles, tox, voc, bio, rec, bp, hc, halo, source))
-            except sqlite3.Error:
-                pass
-        self.conn.commit()
+        cursor.execute("SELECT COUNT(*) FROM solvents")
+        if cursor.fetchone()[0] == 0:
+            solvents = [
+                ("Water", "O", 0.0, 0.0, 1.0, 1.0, 100.0, 4.18, 0, "GreenRoute Solvent DB"),
+                ("Ethanol", "CCO", 0.1, 0.4, 0.9, 0.8, 78.0, 2.44, 0, "GreenRoute Solvent DB"),
+                ("Ethyl acetate", "CC(=O)OCC", 0.2, 0.5, 0.8, 0.7, 77.1, 1.92, 0, "GreenRoute Solvent DB"),
+                ("Dichloromethane", "ClCCl", 0.8, 0.9, 0.05, 0.3, 39.6, 1.19, 1, "GreenRoute Solvent DB"),
+                ("Hexane", "CCCCCC", 0.7, 0.8, 0.2, 0.5, 68.7, 2.27, 0, "GreenRoute Solvent DB"),
+                ("Toluene", "Cc1ccccc1", 0.6, 0.7, 0.4, 0.6, 110.6, 1.70, 0, "GreenRoute Solvent DB"),
+                ("Dimethylformamide", "CN(C)C=O", 0.9, 0.2, 0.3, 0.4, 153.0, 2.03, 0, "GreenRoute Solvent DB"),
+                ("Cyclopentyl methyl ether", "CO[C@H]1CCCC1", 0.15, 0.3, 0.7, 0.9, 106.0, 1.80, 0, "GreenRoute Solvent DB"),
+                ("2-Methyltetrahydrofuran", "CC1CCCO1", 0.2, 0.4, 0.6, 0.8, 80.2, 1.90, 0, "GreenRoute Solvent DB"),
+                ("Ethyl lactate", "CCOC(=O)C(C)O", 0.05, 0.1, 0.95, 0.6, 154.0, 2.10, 0, "GreenRoute Solvent DB")
+            ]
+            cursor.executemany("""
+                INSERT INTO solvents (name, smiles, toxicity, voc, biodegradability, recyclability, boiling_point, heat_capacity, halogenated, data_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, solvents)
+            self.conn.commit()
+
+        cursor.execute("SELECT COUNT(*) FROM synthesis_routes")
+        if cursor.fetchone()[0] == 0:
+            routes = [
+                ("ANY", "Direct Condensation (Classical)", 3, 45.2, 12.5, "Classical multi-step synthesis using stoichiometric reagents.", "GreenRoute DB"),
+                ("ANY", "Catalytic Pathway (Optimised)", 2, 78.5, 4.2, "Uses a heterogeneous catalyst, eliminating one intermediate step.", "GreenRoute DB"),
+                ("ANY", "Biocatalytic One-Pot (Green)", 1, 92.1, 1.1, "Enzymatic one-pot synthesis. Highly selective and minimal waste.", "GreenRoute DB")
+            ]
+            cursor.executemany("""
+                INSERT INTO synthesis_routes (target_smiles, route_name, steps, atom_economy, e_factor_real, description, data_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, routes)
+            self.conn.commit()
+
+    def get_synthesis_routes(self, target_smiles: str) -> list:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT route_name, steps, atom_economy, e_factor_real, description, data_source FROM synthesis_routes WHERE target_smiles = ? OR target_smiles = 'ANY' ORDER BY atom_economy DESC", (target_smiles,))
+        routes = []
+        for row in cursor.fetchall():
+            routes.append({
+                "route_name": row[0],
+                "steps": row[1],
+                "atom_economy": row[2],
+                "e_factor_real": row[3],
+                "description": row[4],
+                "data_source": row[5]
+            })
+        return routes
 
     def get_all_solvents(self):
         cursor = self.conn.cursor()

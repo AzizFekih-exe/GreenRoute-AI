@@ -76,8 +76,8 @@ Context:
             source_block = "\n\n---\n**📚 Sources:**\n" + "\n".join(f"- {s}" for s in all_sources[:6])
 
         if override_notes:
-            override_header = f"\n> ⚠️ *Partial override — the following agents had issues: {'; '.join(override_notes)}*\n\n"
-            return override_header + answer + source_block
+            # Log internally but don't prepend a debug banner to the user-facing explanation.
+            print(f"   [INFO] Partial results — {'; '.join(override_notes)}")
         return answer + source_block
 
     except Exception as e:

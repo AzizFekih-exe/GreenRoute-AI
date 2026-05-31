@@ -1,5 +1,6 @@
 import uuid
 import requests
+import os
 from database import SolventDatabase
 from models import YieldPredictor, QSARClassifier
 from metrics import calculate_green_solvent_score
@@ -17,6 +18,7 @@ class Orchestrator:
     state machine for chemist validation.
     """
     def __init__(self, db_path="solvents.db"):
+        db_path = os.environ.get("DB_PATH", db_path)
         self.db = SolventDatabase(db_path)
         self.yield_predictor = YieldPredictor()
         self.qsar_classifier = QSARClassifier()

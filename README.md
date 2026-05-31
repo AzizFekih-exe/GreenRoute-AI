@@ -63,18 +63,17 @@ If you prefer to run the components manually:
 
 1. **Start Flask API Backend**:
    ```bash
-   cd backend
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   pip install -r ../requirements.txt
-   python app.py
+   pip install -r requirements.txt
+   python backend/app.py
    ```
 
 2. **Start React Frontend**:
    ```bash
    cd frontend
    npm install
-   npm run dev
+   npm run dev -- --port 8501
    ```
    Access the dashboard at `http://localhost:8501`.
 

@@ -1,0 +1,15 @@
+.git
+.antigravity
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+frontend/node_modules
+frontend/dist
+data
+*.db
+*.sqlite
+*.faiss
+*.index
+*.pkl
+*.log

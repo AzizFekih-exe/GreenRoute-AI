@@ -1,5 +1,9 @@
 import re
+import os
+import requests
+from urllib.parse import quote
 import pandas as pd
+from rdkit import Chem
 from src.tox21_loader import load_compound_metadata
 
 # Assay columns and their human-readable names
@@ -22,18 +26,30 @@ _ASSAY_LABELS = {
 def _smiles_to_inchikey(smiles: str) -> str | None:
     """Convert a SMILES string to an InChIKey using RDKit."""
     try:
-        from rdkit import Chem
-        from rdkit.Chem.inchi import MolToInchi
-        from rdkit.Chem.inchi import InchiToInchiKey
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
+        from rdkit.Chem.inchi import MolToInchi
+        from rdkit.Chem.inchi import InchiToInchiKey
         inchi = MolToInchi(mol)
         if not inchi:
             return None
         return InchiToInchiKey(inchi)
     except Exception:
         return None
+
+
+def extract_smiles(text: str) -> str:
+    """Attempts to find a valid SMILES string in the question."""
+    words = text.split()
+    for w in words:
+        w_clean = w.strip("?,.()\"'")
+        # Try to parse with RDKit
+        mol = Chem.MolFromSmiles(w_clean)
+        # Avoid treating words like 'ON', 'NO', 'I' as SMILES unless they really seem like one.
+        if mol is not None and w_clean.upper() not in ["I", "NO", "ON", "A", "AS", "IN", "AT", "IS", "BE", "HE", "WE", "ME", "US", "SO", "DO", "GO"]:
+            return w_clean
+    return ""
 
 
 def _extract_smiles_from_question(question: str) -> list[str]:
@@ -46,7 +62,6 @@ def _extract_smiles_from_question(question: str) -> list[str]:
     for m in re.finditer(pattern, question):
         start = m.end()
         # Walk forward counting parenthesis depth to find where this SMILES ends.
-        # SMILES ends when we hit ') ' or ').' or end-of-string at depth 0.
         depth = 0
         i = start
         while i < len(question):
@@ -55,7 +70,6 @@ def _extract_smiles_from_question(question: str) -> list[str]:
                 depth += 1
             elif ch == ")":
                 if depth == 0:
-                    # Closing paren belongs to the surrounding text, not SMILES
                     break
                 depth -= 1
             elif ch in (" ", "\t", "\n") and depth == 0:
@@ -64,6 +78,13 @@ def _extract_smiles_from_question(question: str) -> list[str]:
         smiles = question[start:i].strip().rstrip(".,;")
         if smiles:
             results.append(smiles)
+    
+    # Fallback to general SMILES extraction if none found via prefix
+    if not results:
+        single = extract_smiles(question)
+        if single:
+            results.append(single)
+            
     return results
 
 
@@ -85,49 +106,85 @@ def _format_tox_record(row: pd.Series) -> str:
 
 def librarian(question: str) -> dict:
     """
-    Queries the local Tox21 database for compound toxicity profiles.
-    Extracts SMILES from the question, converts to InChIKey, then looks up Tox21 records.
+    Queries both the local Tox21 database and the online PubChem BioAssay records.
     """
-    print("\n[LIBRARIAN] Searching local Tox21 dataset...")
+    print("\n[LIBRARIAN] Initiating dual lookup (Local Tox21 + PubChem API)...")
+    
+    content_parts = []
+    sources = []
+    errors = []
+
+    # 1. Local Tox21 Lookup
     try:
         df = load_compound_metadata()
-
-        # Extract all SMILES from question and convert to InChIKeys
         smiles_list = _extract_smiles_from_question(question)
-        if not smiles_list:
-            return {
-                "success": False, "content": "", "sources": [],
-                "error": "No SMILES found in question to look up in Tox21."
-            }
+        if smiles_list:
+            found_records = []
+            for smi in smiles_list:
+                ikey = _smiles_to_inchikey(smi)
+                if not ikey:
+                    continue
+                connectivity = ikey.split("-")[0]
+                mask = df["inchikey"].str.startswith(connectivity, na=False)
+                hits = df[mask]
+                if not hits.empty:
+                    found_records.append(hits.head(2))
 
-        found_records = []
-        for smi in smiles_list:
-            ikey = _smiles_to_inchikey(smi)
-            if not ikey:
-                continue
-            # Match on the first 14 chars of InChIKey (connectivity layer) to be robust
-            connectivity = ikey.split("-")[0]
-            mask = df["inchikey"].str.startswith(connectivity, na=False)
-            hits = df[mask]
-            if not hits.empty:
-                found_records.append(hits.head(2))
+            if found_records:
+                combined_df = pd.concat(found_records).drop_duplicates(subset=["ID"]).head(5)
+                chunks = [_format_tox_record(row) for _, row in combined_df.iterrows()]
+                content_parts.append("=== TOX21 DATABASE ===\n" + "\n\n---\n\n".join(chunks))
+                sources.append("Tox21 Dataset (tox21_compoundData.csv)")
+            else:
+                errors.append("No local Tox21 records matched the query SMILES.")
+        else:
+            errors.append("No SMILES found in question to look up locally.")
+    except Exception as e:
+        errors.append(f"Local Tox21 lookup error: {e}")
 
-        if not found_records:
-            return {
-                "success": False, "content": "", "sources": [],
-                "error": "No compounds found in Tox21 matching the query molecules."
-            }
+    # 2. PubChem BioAssay Lookup
+    try:
+        smiles = extract_smiles(question)
+        if smiles:
+            encoded_smiles = quote(smiles)
+            api_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded_smiles}/assaysummary/JSON"
+            response = requests.get(api_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                table = data.get("Table", {})
+                columns = table.get("Columns", {}).get("Column", [])
+                rows = table.get("Row", [])
+                if rows:
+                    chunks = [f"PubChem BioAssay Results for SMILES: {smiles}"]
+                    for r in rows[:7]:  # Top 7 assays
+                        cells = r.get("Cell", [])
+                        row_dict = dict(zip(columns, cells))
+                        aid = row_dict.get("AID", "N/A")
+                        activity = row_dict.get("Activity Outcome", "N/A")
+                        target = row_dict.get("Target Name", "N/A")
+                        chunks.append(f"• Assay AID: {aid} - Outcome: {activity} - Target: {target}")
+                    content_parts.append("=== PUBCHEM BIOASSAY ===\n" + "\n".join(chunks))
+                    sources.append(f"PubChem Assays for {smiles}")
+                else:
+                    errors.append(f"No PubChem BioAssay records found for SMILES: {smiles}")
+            else:
+                errors.append(f"PubChem API returned status {response.status_code}")
+        else:
+            errors.append("No valid SMILES string found for PubChem lookup.")
+    except Exception as e:
+        errors.append(f"PubChem lookup error: {e}")
 
-        combined_df = pd.concat(found_records).drop_duplicates(subset=["ID"]).head(5)
-        chunks = [_format_tox_record(row) for _, row in combined_df.iterrows()]
-
-        print(f"   [SUCCESS] Found {len(chunks)} Tox21 records for query molecules.")
+    # 3. Combine results
+    if content_parts:
         return {
             "success": True,
-            "content": "\n\n---\n\n".join(chunks),
-            "sources": ["Tox21 Dataset (tox21_compoundData.csv)"]
+            "content": "\n\n".join(content_parts),
+            "sources": sources
         }
-
-    except Exception as e:
-        print(f"   [ERROR] Librarian error: {e}")
-        return {"success": False, "content": "", "sources": [], "error": str(e)}
+    else:
+        return {
+            "success": False,
+            "content": "",
+            "sources": [],
+            "error": " | ".join(errors)
+        }

@@ -1,11 +1,6 @@
 import os
 import pandas as pd
-
-_TOX21_CSV = os.path.join(os.path.dirname(__file__), "..", "..", "tox21", "tox21_compoundData.csv")
-
-def load_compound_metadata():
-    return pd.read_csv(_TOX21_CSV)
-
+from src.tox21_loader import load_compound_metadata
 
 
 def librarian(question: str) -> dict:

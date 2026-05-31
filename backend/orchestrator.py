@@ -88,6 +88,67 @@ class Orchestrator:
             pass
         return None
 
+    def _estimate_solvent_e_factor(self, solvent: dict) -> float:
+        """Estimate a comparative E-factor from solvent hazard flags for demo ranking."""
+        toxicity = solvent.get("toxicity", 0.5)
+        if toxicity < 0.2:
+            e_factor = 2.0
+        elif toxicity > 0.6:
+            e_factor = 7.5
+        else:
+            e_factor = 6.0
+
+        if solvent.get("halogenated") and toxicity >= 0.7:
+            e_factor = max(e_factor, 8.5)
+        return e_factor
+
+    def _hazard_score(self, solvent: dict) -> float:
+        """
+        Select a high-risk comparison solvent from toxicity, VOC, halogenation, and persistence.
+        Higher is worse. This is for choosing a baseline, not for recommending the solvent.
+        """
+        return (
+            0.50 * solvent.get("toxicity", 0.0)
+            + 0.30 * solvent.get("voc", 0.0)
+            + 0.10 * (1.0 if solvent.get("halogenated") else 0.0)
+            + 0.10 * (1.0 - solvent.get("biodegradability", 0.0))
+        )
+
+    def _select_reference_solvent(self, solvents: list, overrides: dict) -> dict:
+        """Choose the most hazardous eligible solvent as the comparison baseline."""
+        eligible = list(solvents)
+
+        # If the user excludes halogenated solvents, use a non-halogenated toxic baseline.
+        if overrides.get("exclude_halogenated"):
+            non_halogenated = [s for s in eligible if not s.get("halogenated")]
+            if non_halogenated:
+                eligible = non_halogenated
+
+        forced = (overrides.get("force_solvent") or "").strip().lower()
+        if forced:
+            non_forced = [s for s in eligible if s.get("name", "").lower() != forced]
+            if non_forced:
+                eligible = non_forced
+
+        if not eligible:
+            eligible = solvents
+
+        ref = max(eligible, key=self._hazard_score).copy()
+        ref["e_factor"] = self._estimate_solvent_e_factor(ref)
+        ref["hazard_score"] = round(self._hazard_score(ref), 3)
+
+        drivers = []
+        if ref.get("toxicity", 0.0) >= 0.7:
+            drivers.append("high toxicity")
+        if ref.get("voc", 0.0) >= 0.7:
+            drivers.append("high VOC burden")
+        if ref.get("halogenated"):
+            drivers.append("halogenated solvent flag")
+        if ref.get("biodegradability", 1.0) <= 0.3:
+            drivers.append("poor biodegradability")
+        ref["reference_reason"] = ", ".join(drivers) if drivers else "highest computed hazard score"
+        return ref
+
     def generate_recommendations(self, target_smiles: str, weights: dict, overrides: dict = None, user_id: int = None) -> dict:
         """
         1. Retrieves all solvents from database.
@@ -125,24 +186,13 @@ class Orchestrator:
         target_smiles = resolved_smiles
         candidates = self.db.get_all_solvents()
         
-        # Determine reference solvent for comparative XAI (e.g. Dichloromethane or Hexane)
-        ref_solvent = None
-        for c in candidates:
-            if c["name"].lower() == "dichloromethane":
-                ref_solvent = c
-                break
-        if not ref_solvent:
-            ref_solvent = candidates[0] if candidates else {"name": "DCM", "toxicity": 0.8, "voc": 0.9, "biodegradability": 0.1, "recyclability": 0.3}
-
-        # Mock standard E-factor for reference
-        ref_solvent_copy = ref_solvent.copy()
-        ref_solvent_copy["e_factor"] = 8.5
+        ref_solvent_copy = self._select_reference_solvent(candidates, overrides)
         
         processed_candidates = []
         
         for s in candidates:
             # Skip the reference toxic solvent from recommendations
-            if s["name"] == ref_solvent.get("name"):
+            if s["name"] == ref_solvent_copy.get("name"):
                 continue
                 
             # Parameter Override: Exclude highly toxic solvents if requested
@@ -158,11 +208,7 @@ class Orchestrator:
                 continue
                 
             # Compute simulated E-factor based on toxicity metrics
-            e_factor = 6.0
-            if s["toxicity"] < 0.2:
-                e_factor = 2.0
-            elif s["toxicity"] > 0.6:
-                e_factor = 7.5
+            e_factor = self._estimate_solvent_e_factor(s)
                 
             # Calculate overall green solvent score
             score = calculate_green_solvent_score(
@@ -228,6 +274,9 @@ class Orchestrator:
                 "explanation": explanation,
                 "yield_explanation": yield_explanation,
                 "warnings": warnings,
+                "reference_solvent": ref_solvent_copy["name"],
+                "reference_hazard_score": ref_solvent_copy["hazard_score"],
+                "reference_reason": ref_solvent_copy["reference_reason"],
                 "data_source": s["data_source"]
             })
             
@@ -244,8 +293,8 @@ class Orchestrator:
                 # Build a rich, data-grounded question so the agent gives a specific scientific answer
                 q = (
                     f"Explain specifically and scientifically why {candidate['name']} "
-                    f"(SMILES: {candidate['smiles']}) is a preferred green solvent over "
-                    f"{ref_name} for reactions involving the target compound '{target_name}' "
+                    f"(SMILES: {candidate['smiles']}) is a preferred green solvent instead of "
+                    f"the high-risk reference solvent {ref_name} for reactions involving the target compound '{target_name}' "
                     f"(SMILES: {target_sm}). "
                     f"Use the following computed green chemistry data: "
                     f"Green Score={candidate['green_score']}, "
@@ -257,7 +306,12 @@ class Orchestrator:
                     f"Predicted Reaction Yield={candidate['yield_info']['predicted_yield']}%, "
                     f"Boiling Point={candidate['boiling_point']}C, "
                     f"Energy Demand={candidate['energy_demand']} kJ. "
-                    f"Reference solvent ({ref_name}) has Toxicity=0.8, Biodegradability=0.05, E-factor=8.5."
+                    f"Reference solvent ({ref_name}) has Toxicity={ref_solvent_copy['toxicity']}, "
+                    f"VOC index={ref_solvent_copy['voc']}, "
+                    f"Biodegradability={ref_solvent_copy['biodegradability']}, "
+                    f"E-factor={ref_solvent_copy['e_factor']}, "
+                    f"Hazard Score={ref_solvent_copy['hazard_score']}, "
+                    f"and was selected because of {ref_solvent_copy['reference_reason']}."
                 )
                 try:
                     ai_exp = run_pipeline(q)
@@ -267,7 +321,7 @@ class Orchestrator:
                     print(f"Failed to generate AI agent explanation for {candidate['name']}: {e}")
                 return candidate["explanation"] # Fallback
 
-            ref_solvent_name = ref_solvent.get("name", "DCM")
+            ref_solvent_name = ref_solvent_copy.get("name", "high-risk reference solvent")
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 futures = {
                     executor.submit(fetch_agent_explanation, r, target_smiles, target_display_name, ref_solvent_name): r

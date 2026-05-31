@@ -8,8 +8,9 @@ class ExplanationEngine:
     def generate_comparison_text(preferred: dict, alternative: dict) -> str:
         """
         Generates a comparative natural language explanation.
-        Example: "Cyclopentyl methyl ether is preferred over dichloromethane because its E-factor 
-        is 0.50 lower, it is readily biodegradable (OECD 301F), and it reduces VOC emissions by 65%."
+        Example: "Cyclopentyl methyl ether is recommended as a greener substitute for the
+        selected high-risk reference solvent dichloromethane because its E-factor is 0.50 lower,
+        it is readily biodegradable (OECD 301F), and it reduces VOC emissions by 65%."
         """
         reasons = []
         
@@ -39,7 +40,10 @@ class ExplanationEngine:
             reasons.append("it has significantly lower toxicity/toxicity flags")
 
         if not reasons:
-            return f"{preferred['name']} shows a comparable environmental footprint to {alternative['name']}."
+            return (
+                f"{preferred['name']} shows a comparable environmental footprint to the selected "
+                f"high-risk reference solvent {alternative['name']}."
+            )
             
         if len(reasons) == 1:
             reasons_str = reasons[0]
@@ -48,7 +52,12 @@ class ExplanationEngine:
         else:
             reasons_str = f"{', '.join(reasons[:-1])}, and {reasons[-1]}"
             
-        return f"{preferred['name']} is preferred over {alternative['name']} because {reasons_str}."
+        reference_reason = alternative.get("reference_reason")
+        reason_suffix = f" ({reference_reason})" if reference_reason else ""
+        return (
+            f"{preferred['name']} is recommended as a greener substitute for the selected "
+            f"high-risk reference solvent {alternative['name']}{reason_suffix} because {reasons_str}."
+        )
 
     @staticmethod
     def get_uncertainty_explanation(yield_data: dict) -> str:

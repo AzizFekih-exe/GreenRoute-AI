@@ -1,7 +1,7 @@
 import sqlite3
 import numpy as np
-import os
 import hashlib
+import hmac
 import secrets
 import datetime
 
@@ -414,7 +414,7 @@ class SolventDatabase:
         
         user_id, uname, stored_hash, salt = row
         computed_hash, _ = self.hash_password(password, salt)
-        if computed_hash == stored_hash:
+        if hmac.compare_digest(computed_hash, stored_hash):
             return {"id": user_id, "username": uname}
         return None
 

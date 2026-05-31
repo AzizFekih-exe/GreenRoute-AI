@@ -70,11 +70,14 @@ def register():
     """
     data = request.get_json() or {}
     username = data.get("username", "").strip()
-    password = data.get("password", "").strip()
+    password = data.get("password", "")
     
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
         
+    if len(username) > 64 or len(password) > 128:
+        return jsonify({"error": "Username or password is too long"}), 400
+
     if len(password) < 6:
         return jsonify({"error": "Password must be at least 6 characters long"}), 400
 
@@ -112,10 +115,13 @@ def login():
     """
     data = request.get_json() or {}
     username = data.get("username", "").strip()
-    password = data.get("password", "").strip()
+    password = data.get("password", "")
     
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
+
+    if len(username) > 64 or len(password) > 128:
+        return jsonify({"error": "Username or password is too long"}), 400
         
     user = orchestrator.db.check_user_credentials(username, password)
     if not user:

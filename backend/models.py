@@ -13,10 +13,10 @@ try:
 except ImportError:
     joblib = None
 
-# Detect paths for P2's model directory
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-YIELD_MODEL_PATH = os.path.join(BASE_DIR, "p2_ai_ml", "models", "yield_predictor.joblib")
-QSAR_MODEL_PATH = os.path.join(BASE_DIR, "p2_ai_ml", "models", "toxicity_classifier.joblib")
+MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(BASE_DIR, "models"))
+YIELD_MODEL_PATH = os.path.join(MODEL_DIR, "yield_predictor.joblib")
+QSAR_MODEL_PATH = os.path.join(MODEL_DIR, "toxicity_classifier.joblib")
 
 class YieldPredictor:
     def __init__(self):

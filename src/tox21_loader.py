@@ -23,8 +23,6 @@ from urllib.request import urlretrieve
 
 import numpy as np
 import pandas as pd
-from scipy import io as spio
-from scipy.sparse import issparse, hstack as sparse_hstack
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +72,7 @@ _ASSAY_COL_MAP = {
     "SR-p53":       "SR.p53",
 }
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "tox21"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "tox21"
 
 # ---------------------------------------------------------------------------
 # Download helpers
@@ -112,7 +110,7 @@ def download_tox21(data_dir: Path | str | None = None,
     Parameters
     ----------
     data_dir : path-like, optional
-        Where to store the files.  Defaults to ``<project_root>/data/tox21/``.
+        Where to store the files. Defaults to ``src/tox21/``.
     include_sparse : bool
         Whether to also download the (larger) sparse feature files.
     include_compound_data : bool
@@ -154,6 +152,7 @@ def _load_dense(path: Path) -> np.ndarray:
 
 def _load_sparse(path: Path):
     """Load a Matrix Market .mtx.gz file and return a scipy sparse matrix."""
+    from scipy import io as spio
     return spio.mmread(str(path)).tocsc()
 
 

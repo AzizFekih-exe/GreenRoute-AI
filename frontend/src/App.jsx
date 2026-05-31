@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import './App.css';
 
 function AuthPage({ onLogin, BACKEND_URL }) {
@@ -13,7 +13,7 @@ function AuthPage({ onLogin, BACKEND_URL }) {
     setError('');
     
     const u = username.trim();
-    const p = password.trim();
+    const p = password;
     if (!u || !p) {
       setError('Please fill in all fields.');
       return;
@@ -68,6 +68,8 @@ function AuthPage({ onLogin, BACKEND_URL }) {
               onChange={(e) => setUsername(e.target.value)}
               disabled={loading}
               placeholder="e.g. chemist_smith"
+              autoComplete="username"
+              maxLength={64}
               required 
             />
           </div>
@@ -82,6 +84,9 @@ function AuthPage({ onLogin, BACKEND_URL }) {
               onChange={(e) => setPassword(e.target.value)}
               disabled={loading}
               placeholder="••••••••"
+              autoComplete={isLogin ? "current-password" : "new-password"}
+              minLength={6}
+              maxLength={128}
               required 
             />
           </div>
@@ -277,7 +282,9 @@ function App() {
           if (errData && errData.error) {
             errMsg = errData.error;
           }
-        } catch (e) {}
+        } catch {
+          errMsg = `Server returned error status: ${res.status}`;
+        }
         throw new Error(errMsg);
       }
       const data = await res.json();

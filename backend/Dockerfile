@@ -13,8 +13,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN mkdir -p /app/data
 
 COPY backend/ ./backend/
-COPY p1_chemistry_data/ ./p1_chemistry_data/
-COPY p2_ai_ml/ ./p2_ai_ml/
 COPY src/ ./src/
 
 ENV PYTHONPATH=/app

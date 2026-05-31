@@ -3,13 +3,6 @@ import json
 from dotenv import load_dotenv
 from groq import Groq
 
-# Attempt to import some local helpers to provide constraints/context
-try:
-    from src.core.descriptors import get_all_descriptors
-    from src.ml.similarity import structural_similarity
-except ImportError:
-    pass
-
 load_dotenv()
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 

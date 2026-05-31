@@ -1,10 +1,31 @@
 import re
 import os
 import requests
-from urllib.parse import quote
+import numpy as np
 import pandas as pd
-from rdkit import Chem
+from urllib.parse import quote
+from rdkit import Chem, RDLogger
+from rdkit.Chem import Descriptors
 from src.tox21_loader import load_compound_metadata
+
+# Silence RDKit logos/errors for cleaner logs
+RDLogger.DisableLog('rdApp.*')
+
+try:
+    from src.ai_agents.utils import extract_smiles
+except ImportError:
+    # Fallback if import fails or file not found
+    def extract_smiles(text: str) -> str:
+        """Attempts to find a valid SMILES string in the question."""
+        words = text.split()
+        for w in words:
+            w_clean = w.strip("?,.()\"'")
+            # Try to parse with RDKit
+            mol = Chem.MolFromSmiles(w_clean)
+            # Avoid treating words like 'ON', 'NO', 'I' as SMILES unless they really seem like one.
+            if mol is not None and w_clean.upper() not in ["I", "NO", "ON", "A", "AS", "IN", "AT", "IS", "BE", "HE", "WE", "ME", "US", "SO", "DO", "GO"]:
+                return w_clean
+        return ""
 
 # Assay columns and their human-readable names
 _ASSAY_LABELS = {
@@ -29,8 +50,7 @@ def _smiles_to_inchikey(smiles: str) -> str | None:
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        from rdkit.Chem.inchi import MolToInchi
-        from rdkit.Chem.inchi import InchiToInchiKey
+        from rdkit.Chem.inchi import MolToInchi, InchiToInchiKey
         inchi = MolToInchi(mol)
         if not inchi:
             return None
@@ -39,17 +59,30 @@ def _smiles_to_inchikey(smiles: str) -> str | None:
         return None
 
 
-def extract_smiles(text: str) -> str:
-    """Attempts to find a valid SMILES string in the question."""
-    words = text.split()
-    for w in words:
-        w_clean = w.strip("?,.()\"'")
-        # Try to parse with RDKit
-        mol = Chem.MolFromSmiles(w_clean)
-        # Avoid treating words like 'ON', 'NO', 'I' as SMILES unless they really seem like one.
-        if mol is not None and w_clean.upper() not in ["I", "NO", "ON", "A", "AS", "IN", "AT", "IS", "BE", "HE", "WE", "ME", "US", "SO", "DO", "GO"]:
-            return w_clean
-    return ""
+def calculate_environmental_proxy(mol):
+    """Calculates a proxy for environmental 'greenness' based on complexity and atoms."""
+    # Crude proxy for E-factor/Complexity: BertzCT (Complexity) / Molecular Weight
+    complexity = Descriptors.BertzCT(mol)
+    mw = Descriptors.MolWt(mol)
+    # Higher complexity per Dalton typically means more steps/solvents (Higher E-factor potential)
+    complexity_index = complexity / mw if mw > 0 else 0
+    
+    # Toxicity Proxy: Rule of 5 violations + specific heavy atoms
+    h_donors = Descriptors.NumHDonors(mol)
+    h_acc = Descriptors.NumHAcceptors(mol)
+    logp = Descriptors.MolLogP(mol)
+    
+    violations = 0
+    if mw > 500: violations += 1
+    if logp > 5: violations += 1
+    if h_donors > 5: violations += 1
+    if h_acc > 10: violations += 1
+    
+    return {
+        "complexity_index": round(complexity_index, 2),
+        "ro5_violations": violations,
+        "is_drug_like": violations <= 1
+    }
 
 
 def _extract_smiles_from_question(question: str) -> list[str]:
@@ -106,85 +139,119 @@ def _format_tox_record(row: pd.Series) -> str:
 
 def librarian(question: str) -> dict:
     """
-    Queries both the local Tox21 database and the online PubChem BioAssay records.
+    Queries Tox21, PubChem BioAssay, and calculates RDKit properties for scientific insights.
     """
-    print("\n[LIBRARIAN] Initiating dual lookup (Local Tox21 + PubChem API)...")
+    print("\n[LIBRARIAN] Performing molecular analysis & multi-source lookup...")
     
+    smiles_list = _extract_smiles_from_question(question)
+    if not smiles_list:
+        return {
+            "success": False, 
+            "content": "", 
+            "sources": [], 
+            "error": "No valid SMILES string found in query."
+        }
+        
+    primary_smiles = smiles_list[0]
+    mol = Chem.MolFromSmiles(primary_smiles)
+    if not mol:
+        return {
+            "success": False, 
+            "content": "", 
+            "sources": [], 
+            "error": "Invalid SMILES structure."
+        }
+
     content_parts = []
     sources = []
     errors = []
 
-    # 1. Local Tox21 Lookup
+    # 1. RDKit Molecular Properties
+    mw = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    h_donors = Descriptors.NumHDonors(mol)
+    h_acc = Descriptors.NumHAcceptors(mol)
+    env_data = calculate_environmental_proxy(mol)
+
+    rdkit_block = (
+        f"Molecular Analysis for SMILES: {primary_smiles}\n"
+        f"🧪 RDKIT PROPERTIES (Physicochemical):\n"
+        f"• Molecular Weight: {mw:.2f} g/mol\n"
+        f"• LogP (Lipophilicity): {logp:.2f}\n"
+        f"• H-Bond Donors: {h_donors} | H-Bond Acceptors: {h_acc}\n"
+        f"• Drug-likeness: {'High' if env_data['is_drug_like'] else 'Low'} ({env_data['ro5_violations']} Rule of 5 violations)\n"
+        f"🌱 GREEN & TOXICITY PROXY:\n"
+        f"• Synthetic Complexity Index: {env_data['complexity_index']} (Higher means more likely higher E-factor)\n"
+        f"• Toxicity Flag: {'Low' if logp < 3 else 'Elevated LogP (Potential bioaccumulation)'}"
+    )
+    content_parts.append(rdkit_block)
+    sources.append("RDKit Properties")
+
+    # 2. Local Tox21 Lookup
     try:
         df = load_compound_metadata()
-        smiles_list = _extract_smiles_from_question(question)
-        if smiles_list:
-            found_records = []
-            for smi in smiles_list:
-                ikey = _smiles_to_inchikey(smi)
-                if not ikey:
-                    continue
-                connectivity = ikey.split("-")[0]
-                mask = df["inchikey"].str.startswith(connectivity, na=False)
-                hits = df[mask]
-                if not hits.empty:
-                    found_records.append(hits.head(2))
+        found_records = []
+        for smi in smiles_list:
+            ikey = _smiles_to_inchikey(smi)
+            if not ikey:
+                continue
+            connectivity = ikey.split("-")[0]
+            mask = df["inchikey"].str.startswith(connectivity, na=False)
+            hits = df[mask]
+            if not hits.empty:
+                found_records.append(hits.head(2))
 
-            if found_records:
-                combined_df = pd.concat(found_records).drop_duplicates(subset=["ID"]).head(5)
-                chunks = [_format_tox_record(row) for _, row in combined_df.iterrows()]
-                content_parts.append("=== TOX21 DATABASE ===\n" + "\n\n---\n\n".join(chunks))
-                sources.append("Tox21 Dataset (tox21_compoundData.csv)")
-            else:
-                errors.append("No local Tox21 records matched the query SMILES.")
+        if found_records:
+            combined_df = pd.concat(found_records).drop_duplicates(subset=["ID"]).head(5)
+            chunks = [_format_tox_record(row) for _, row in combined_df.iterrows()]
+            content_parts.append("=== TOX21 DATABASE ===\n" + "\n\n---\n\n".join(chunks))
+            sources.append("Tox21 Dataset")
         else:
-            errors.append("No SMILES found in question to look up locally.")
+            errors.append("No local Tox21 records matched.")
     except Exception as e:
         errors.append(f"Local Tox21 lookup error: {e}")
 
-    # 2. PubChem BioAssay Lookup
+    # 3. PubChem BioAssay Search
     try:
-        smiles = extract_smiles(question)
-        if smiles:
-            encoded_smiles = quote(smiles)
-            api_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded_smiles}/assaysummary/JSON"
-            response = requests.get(api_url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                table = data.get("Table", {})
-                columns = table.get("Columns", {}).get("Column", [])
-                rows = table.get("Row", [])
-                if rows:
-                    chunks = [f"PubChem BioAssay Results for SMILES: {smiles}"]
-                    for r in rows[:7]:  # Top 7 assays
-                        cells = r.get("Cell", [])
-                        row_dict = dict(zip(columns, cells))
-                        aid = row_dict.get("AID", "N/A")
-                        activity = row_dict.get("Activity Outcome", "N/A")
-                        target = row_dict.get("Target Name", "N/A")
-                        chunks.append(f"• Assay AID: {aid} - Outcome: {activity} - Target: {target}")
-                    content_parts.append("=== PUBCHEM BIOASSAY ===\n" + "\n".join(chunks))
-                    sources.append(f"PubChem Assays for {smiles}")
-                else:
-                    errors.append(f"No PubChem BioAssay records found for SMILES: {smiles}")
+        encoded_smiles = quote(primary_smiles)
+        api_url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/{encoded_smiles}/assaysummary/JSON"
+        response = requests.get(api_url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            table = data.get("Table", {})
+            columns = table.get("Columns", {}).get("Column", [])
+            rows = table.get("Row", [])
+            
+            if rows:
+                all_parsed = []
+                for r in rows:
+                    cells = r.get("Cell", [])
+                    row_dict = dict(zip(columns, cells))
+                    all_parsed.append(row_dict)
+                
+                active_with_target = [r for r in all_parsed if r.get("Activity Outcome") == "Active" and r.get("Target Name") not in ["None", "N/A", ""]]
+                active_no_target = [r for r in all_parsed if r.get("Activity Outcome") == "Active" and r not in active_with_target]
+                
+                pub_chunks = [f"🔬 PUBCHEM BIOASSAY SUMMARY (Total: {len(rows)} assays found):"]
+                display_results = active_with_target[:3] + active_no_target[:(5 - len(active_with_target[:3]))]
+                for r in display_results[:5]:
+                    target = r.get("Target Name", "Phenotypic/General")
+                    pub_chunks.append(f"  - AID: {r.get('AID')} | Target: {target} | {r.get('Activity Outcome').upper()}")
+                
+                content_parts.append("\n".join(pub_chunks))
+                sources.append("PubChem BioAssays")
             else:
-                errors.append(f"PubChem API returned status {response.status_code}")
+                errors.append("No PubChem experimental assay records found.")
         else:
-            errors.append("No valid SMILES string found for PubChem lookup.")
+            errors.append(f"PubChem API issue (Status {response.status_code})")
+            
     except Exception as e:
         errors.append(f"PubChem lookup error: {e}")
 
-    # 3. Combine results
-    if content_parts:
-        return {
-            "success": True,
-            "content": "\n\n".join(content_parts),
-            "sources": sources
-        }
-    else:
-        return {
-            "success": False,
-            "content": "",
-            "sources": [],
-            "error": " | ".join(errors)
-        }
+    return {
+        "success": True, 
+        "content": "\n\n".join(content_parts), 
+        "sources": sources,
+        "error": " | ".join(errors) if errors else None
+    }

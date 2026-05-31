@@ -1,20 +1,37 @@
 import os
 from dotenv import load_dotenv
 from tavily import TavilyClient
+from src.ai_agents.utils import extract_smiles
 
 load_dotenv()
 _api_key = os.environ.get("TAVILY_API_KEY")
 tavily_client = TavilyClient(api_key=_api_key) if _api_key else None
 
+PRIORITY_DOMAINS = [
+    "pubchem.ncbi.nlm.nih.gov",
+    "chemspider.com",
+    "drugbank.com",
+    "nature.com",
+    "sciencedirect.com",
+    "acs.org",
+    "rsc.org",
+    "wikipedia.org"
+]
+
 def researcher(question: str) -> dict:
-    """Searches the web via Tavily for up-to-date chemical/scientific information."""
-    print("\n[RESEARCHER] Searching the web for updated information...")
+    """Searches the web via Tavily, prioritizing high-authority scientific domains."""
+    print("\n[RESEARCHER] Searching high-authority scientific domains...")
     
     if not tavily_client:
         print("   [ERROR] Tavily API key not found. Skipping web search.")
         return {"success": False, "content": "", "sources": [], "error": "No API key"}
 
+    smiles = extract_smiles(question)
+    query_context = f"molecule {smiles}" if smiles else ""
+    search_query = f"{question} {query_context} chemistry toxicity properties"
+
     try:
+<<<<<<< Updated upstream
         # Build a short search query from key terms to stay under Tavily's 400-char limit.
         # The full question is verbose (includes metrics); extract chemical names only.
         import re as _re
@@ -33,11 +50,14 @@ def researcher(question: str) -> dict:
             search_query = question[:380]
 
         search_query = search_query[:390]  # Hard cap just in case
+=======
+>>>>>>> Stashed changes
         result = tavily_client.search(
             query=search_query,
-            search_depth="basic",
-            max_results=3,
-            include_answer=True
+            search_depth="advanced",
+            max_results=4,
+            include_answer=True,
+            include_domains=PRIORITY_DOMAINS 
         )
 
         web_answer = result.get("answer", "")

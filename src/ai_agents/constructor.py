@@ -29,7 +29,7 @@ def constructor(question: str, lib_result: dict, res_result: dict) -> str:
     override_notes   = []
 
     if lib_ok and lib_result["content"]:
-        context_sections.append(f"=== PUBCHEM BIOASSAY ===\n{lib_result['content']}")
+        context_sections.append(f"=== TOX21 DATABASE ===\n{lib_result['content']}")
     else:
         override_notes.append(f"Librarian: {lib_result.get('error','No data')}")
 
